@@ -47,7 +47,7 @@ int device_vlan_get_input(struct device *dev, uint16_t bpf_vlan)
 	struct device *master = dev->master;
 	int i;
 
-	if (!master || !master->br)
+	if (!master || !master->br || !master->br->vlan_enabled)
 		return 0;
 
 	if (!(bpf_vlan & BRIDGER_VLAN_PRESENT) ||

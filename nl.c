@@ -101,11 +101,14 @@ handle_newlink(struct nlmsghdr *nh)
 	}
 
 	if (tbi[IFLA_INFO_DATA] && type == DEVICE_TYPE_BRIDGE) {
+		struct nlattr *cur;
+
 		nla_parse_nested(tbd, IFLA_BR_MAX, tbi[IFLA_INFO_DATA], NULL);
-		if (tbd[IFLA_BR_VLAN_PROTOCOL]) {
-			uint16_t val = nla_get_u16(tbd[IFLA_BR_VLAN_PROTOCOL]);
-			dev->br->vlan_proto = ntohs(val);
-		}
+
+		if ((cur = tbd[IFLA_BR_VLAN_FILTERING]) != NULL)
+			dev->br->vlan_enabled = nla_get_u8(cur);
+		if ((cur = tbd[IFLA_BR_VLAN_PROTOCOL]) != NULL)
+			dev->br->vlan_proto = ntohs(nla_get_u16(cur));
 	}
 
 	device_update(dev);
