@@ -160,7 +160,7 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 		return;
 
 	addr = nla_data(tb[NDA_LLADDR]);
-	if (!addr[0] & 1) /* skip multicast */
+	if (addr[0] & 1) /* skip multicast */
 		return;
 
 	dev = device_get(nla_get_u32(tb[NDA_MASTER]));
