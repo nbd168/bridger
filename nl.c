@@ -71,6 +71,7 @@ handle_newlink(struct nlmsghdr *nh)
 	struct nlattr *tb[__IFLA_MAX];
 	struct nlattr *tbi[__IFLA_INFO_MAX] = {};
 	struct nlattr *tbd[__IFLA_BR_MAX];
+	struct nlattr *cur;
 	enum device_type type = DEVICE_TYPE_ETHERNET;
 	struct device *dev;
 
@@ -89,6 +90,10 @@ handle_newlink(struct nlmsghdr *nh)
 		type = device_lookup_type(nla_data(tbi[IFLA_INFO_KIND]));
 
 	dev = device_create(ifi->ifi_index, type, nla_data(tb[IFLA_IFNAME]));
+
+	if ((cur = tb[IFLA_ADDRESS]) != NULL &&
+	    nla_len(cur) == ETH_ALEN)
+		memcpy(dev->addr, nla_data(cur), ETH_ALEN);
 
 	if (ifi->ifi_family == PF_BRIDGE) {
 		if (tb[IFLA_MASTER])

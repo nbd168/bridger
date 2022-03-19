@@ -49,6 +49,12 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (!dev->master || !dev->master->br)
 		return;
 
+	if (!memcmp(key->src, dev->addr, ETH_ALEN) ||
+	    !memcmp(key->src, dev->master->addr, ETH_ALEN) ||
+	    !memcmp(key->dest, dev->addr, ETH_ALEN) ||
+	    !memcmp(key->dest, dev->master->addr, ETH_ALEN))
+		return;
+
 	br = dev->master->br;
 
 	memcpy(fkey.addr, key->src, ETH_ALEN);

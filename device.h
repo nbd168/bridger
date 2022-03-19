@@ -15,6 +15,8 @@ struct device {
 	enum device_type type;
 	char ifname[IFNAMSIZ];
 
+	uint8_t addr[ETH_ALEN];
+
 	struct device *master;
 
 	struct list_head member_list;
