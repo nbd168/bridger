@@ -43,10 +43,7 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	struct fdb_key fkey = {};
 
 	dev = device_get(key->ifindex);
-	if (dev->br)
-		return;
-
-	if (!dev->master || !dev->master->br)
+	if (!dev || dev->br || !dev->master || !dev->master->br)
 		return;
 
 	if (!memcmp(key->src, dev->addr, ETH_ALEN) ||
