@@ -25,6 +25,7 @@ struct device {
 
 	struct bridge *br;
 
+	int phys_switch_id;
 	int pvid;
 
 	int n_vlans;

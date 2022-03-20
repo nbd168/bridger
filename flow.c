@@ -74,6 +74,11 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (fdb_out->dev->br)
 		return;
 
+	if (fdb_in->dev == fdb_out->dev ||
+	    (fdb_in->dev->phys_switch_id >= 0 &&
+	     fdb_in->dev->phys_switch_id == fdb_out->dev->phys_switch_id))
+		return;
+
 	flow = avl_find_element(&flows, key, flow, node);
 	if (!flow) {
 		flow = calloc(1, sizeof(*flow));
