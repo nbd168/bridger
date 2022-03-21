@@ -9,6 +9,7 @@ struct bridger_flow {
 
 	uint64_t avg_packets;
 	uint64_t cur_packets;
+	int idle;
 
 	struct fdb_entry *fdb_in, *fdb_out;
 	struct list_head fdb_in_list, fdb_out_list;

@@ -25,8 +25,24 @@ __bridger_flow_delete(struct bridger_flow *flow)
 	avl_delete(&sorted_flows, &flow->sort_node);
 }
 
+static void
+flow_debug_msg(struct bridger_flow *flow, const char *type)
+{
+	char src[20], dest[20];
+	D("%s flow %s@%s -> %s@%s vlan=%d cur_packets=%"PRIu64" avg_packets=%"PRIu64" idle=%d\n", type,
+	  strcpy(src, format_macaddr(flow->key.src)),
+	  flow->fdb_in->dev->ifname,
+	  strcpy(dest, format_macaddr(flow->key.dest)),
+	  flow->fdb_out->dev->ifname,
+	  flow->key.vlan & BRIDGER_VLAN_ID,
+	  flow->cur_packets,
+	  flow->avg_packets >> BRIDGER_EWMA_SHIFT,
+	  flow->idle);
+}
+
 void bridger_flow_delete(struct bridger_flow *flow)
 {
+	flow_debug_msg(flow, "Delete");
 	__bridger_flow_delete(flow);
 	avl_delete(&flows, &flow->node);
 	bridger_bpf_flow_delete(flow);
@@ -107,25 +123,21 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 static void
 bridger_flow_update_cb(struct uloop_timeout *timeout)
 {
-	struct bridger_flow *flow;
-	char src[20], dest[20];
+	struct bridger_flow *flow, *tmp;
 
 	uloop_timeout_set(timeout, 1000);
 
-	avl_for_each_element(&flows, flow, node) {
+	avl_for_each_element_safe(&flows, flow, node, tmp) {
 		avl_delete(&sorted_flows, &flow->sort_node);
 		bridger_bpf_flow_update(flow);
-
-		D("Update flow %s@%s -> %s@%s vlan=%d cur_packets=%"PRIu64" avg_packets=%"PRIu64"\n",
-		  strcpy(src, format_macaddr(flow->key.src)),
-		  flow->fdb_in->dev->ifname,
-		  strcpy(dest, format_macaddr(flow->key.dest)),
-		  flow->fdb_out->dev->ifname,
-		  flow->key.vlan & BRIDGER_VLAN_ID,
-		  flow->cur_packets,
-		  flow->avg_packets >> BRIDGER_EWMA_SHIFT);
-
 		avl_insert(&sorted_flows, &flow->sort_node);
+
+		flow_debug_msg(flow, "Update");
+
+		if (flow->cur_packets)
+			flow->idle = 0;
+		else if (++flow->idle >= 30)
+			bridger_flow_delete(flow);
 	}
 }
 
