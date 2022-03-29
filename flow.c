@@ -127,6 +127,11 @@ bridger_flow_update_cb(struct uloop_timeout *timeout)
 
 	uloop_timeout_set(timeout, 1000);
 
+	avl_for_each_element(&flows, flow, node) {
+		flow->fdb_in->updated = false;
+		flow->fdb_out->updated = false;
+	}
+
 	avl_for_each_element_safe(&flows, flow, node, tmp) {
 		avl_delete(&sorted_flows, &flow->sort_node);
 		bridger_bpf_flow_update(flow);
@@ -138,6 +143,12 @@ bridger_flow_update_cb(struct uloop_timeout *timeout)
 			flow->idle = 0;
 		else if (++flow->idle >= 30)
 			bridger_flow_delete(flow);
+
+		if (flow->idle)
+			continue;
+
+		bridger_nl_fdb_refresh(flow->fdb_in);
+		bridger_nl_fdb_refresh(flow->fdb_out);
 	}
 }
 

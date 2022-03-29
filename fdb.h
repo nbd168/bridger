@@ -10,6 +10,8 @@ struct fdb_entry {
 	struct avl_node node;
 
 	struct fdb_key key;
+	uint16_t ndm_state;
+	bool updated;
 
 	struct device *dev;
 	struct list_head dev_list;

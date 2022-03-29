@@ -152,7 +152,8 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 	struct bridge *br;
 	const uint8_t *addr;
 
-	if (r->ndm_family != AF_BRIDGE)
+	if (r->ndm_family != AF_BRIDGE ||
+	    r->ndm_state == NUD_STALE)
 		return;
 
 	nlmsg_parse(nh, sizeof(struct ndmsg), tb, NDA_MAX, NULL);
@@ -183,7 +184,8 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 	}
 
 	dev = device_get(r->ndm_ifindex);
-	fdb_create(br, &key, dev);
+	f = fdb_create(br, &key, dev);
+	f->ndm_state = r->ndm_state;
 }
 
 static void
@@ -285,6 +287,37 @@ int bridger_nl_set_bpf_prog(int ifindex, int fd)
 
 	attach_ingress.prog_fd = fd;
 	return bpf_tc_attach(&hook, &attach_ingress);
+}
+
+int bridger_nl_fdb_refresh(struct fdb_entry *f)
+{
+	struct ndmsg ndmsg = {
+		.ndm_family = PF_BRIDGE,
+		.ndm_flags = NTF_USE | NTF_MASTER,
+		.ndm_state = f->ndm_state,
+	};
+	struct nl_msg *msg;
+	int ret;
+
+	if (!f->dev || f->updated)
+		return 0;
+
+	ndmsg.ndm_ifindex = device_ifindex(f->dev);
+	msg = nlmsg_alloc_simple(RTM_NEWNEIGH, NLM_F_REQUEST);
+	nlmsg_append(msg, &ndmsg, sizeof(ndmsg), NLMSG_ALIGNTO);
+	nla_put_u16(msg, NDA_VLAN, f->key.vlan);
+	nla_put(msg, NDA_LLADDR, ETH_ALEN, f->key.addr);
+	nl_send_auto_complete(event_sock, msg);
+	nlmsg_free(msg);
+
+	f->updated = true;
+
+	ret = nl_wait_for_ack(event_sock);
+	if (ret)
+		D("Failed to refresh fdb entry %s vid=%d @%s ret=%d\n",
+		  format_macaddr(f->key.addr), f->key.vlan, f->dev->ifname, ret);
+
+	return ret;
 }
 
 int bridger_nl_init(void)
