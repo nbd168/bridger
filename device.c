@@ -170,7 +170,7 @@ void device_free(struct device *dev)
 	avl_delete(&devices, &dev->node);
 	device_clear_flows(dev);
 	if (dev->master) {
-		bridger_bpf_device_detach(dev);
+		bridger_nl_device_detach(dev);
 		list_del(&dev->member_list);
 	}
 	free(dev->vlan);
@@ -200,9 +200,9 @@ void device_update(struct device *dev)
 
 	if (!!master != !!dev->master) {
 		if (master)
-			bridger_bpf_device_attach(dev);
+			bridger_nl_device_attach(dev);
 		else
-			bridger_bpf_device_detach(dev);
+			bridger_nl_device_detach(dev);
 	}
 
 	if (dev->master != master)

@@ -51,7 +51,8 @@ static inline void bridger_ewma(uint64_t *avg, uint32_t val)
 int bridger_nl_init(void);
 const char *format_macaddr(const uint8_t *mac);
 
-int bridger_nl_set_bpf_prog(int ifindex, int fd);
+int bridger_nl_device_attach(struct device *dev);
+void bridger_nl_device_detach(struct device *dev);
 int bridger_nl_fdb_refresh(struct fdb_entry *f);
 
 #endif

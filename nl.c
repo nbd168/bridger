@@ -269,7 +269,7 @@ static void bridger_refresh_linkinfo_cb(struct uloop_timeout *timeout)
 	nl_send_auto_complete(event_sock, msg);
 }
 
-int bridger_nl_set_bpf_prog(int ifindex, int fd)
+static int bridger_nl_set_bpf_prog(int ifindex, int fd)
 {
 	DECLARE_LIBBPF_OPTS(bpf_tc_hook, hook,
 			    .attach_point = BPF_TC_INGRESS,
@@ -287,6 +287,16 @@ int bridger_nl_set_bpf_prog(int ifindex, int fd)
 
 	attach_ingress.prog_fd = fd;
 	return bpf_tc_attach(&hook, &attach_ingress);
+}
+
+int bridger_nl_device_attach(struct device *dev)
+{
+	return bridger_nl_set_bpf_prog(device_ifindex(dev), bridger_bpf_prog_fd);
+}
+
+void bridger_nl_device_detach(struct device *dev)
+{
+	bridger_nl_set_bpf_prog(device_ifindex(dev), -1);
 }
 
 int bridger_nl_fdb_refresh(struct fdb_entry *f)

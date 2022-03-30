@@ -15,6 +15,7 @@ static struct bpf_program *prog;
 static int map_pending = -1;
 static int map_offload = -1;
 static struct uloop_timeout poll_timer;
+int bridger_bpf_prog_fd = -1;
 
 static int bridger_bpf_pr(enum libbpf_print_level level, const char *format,
 		     va_list args)
@@ -30,26 +31,6 @@ static void bridger_init_env(void)
 	};
 
 	setrlimit(RLIMIT_MEMLOCK, &limit);
-}
-
-int bridger_bpf_device_attach(struct device *dev)
-{
-	int ifindex = device_ifindex(dev);
-	int fd;
-
-	fd = bpf_program__fd(prog);
-
-	if (bridger_nl_set_bpf_prog(ifindex, fd))
-		D("Failed to attach bpf program to device %s\n", dev->ifname);
-
-	return 0;
-}
-
-void bridger_bpf_device_detach(struct device *dev)
-{
-	int ifindex = device_ifindex(dev);
-
-	bridger_nl_set_bpf_prog(ifindex, -1);
 }
 
 void bridger_bpf_flow_upload(struct bridger_flow *flow)
@@ -146,6 +127,8 @@ bridger_create_program(void)
 	if (!bridger_get_map_fd(&map_pending, "pending_flows") ||
 	    !bridger_get_map_fd(&map_offload, "offload_flows"))
 		return -1;
+
+	bridger_bpf_prog_fd = bpf_program__fd(prog);
 
 	return 0;
 }
