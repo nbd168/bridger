@@ -18,6 +18,7 @@ struct device {
 	uint8_t addr[ETH_ALEN];
 
 	struct device *master;
+	struct device *offload_dev;
 
 	struct list_head member_list;
 

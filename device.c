@@ -6,6 +6,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <glob.h>
 #include <libubox/utils.h>
 #include "bridger.h"
 
@@ -148,9 +149,38 @@ void device_free(struct device *dev)
 	free(dev);
 }
 
+static struct device *device_get_offload_dev(struct device *dev)
+{
+	char path[128];
+	char *name;
+	glob_t g;
+	int index;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/lower_*", dev->ifname);
+	dev = NULL;
+	glob(path, GLOB_NOSORT, NULL, &g);
+	if (g.gl_pathc != 1)
+		goto out;
+
+	name = strrchr(g.gl_pathv[0], '/');
+	if (!name)
+		goto out;
+
+	name += 7;
+	index = if_nametoindex(name);
+	if (!index)
+		goto out;
+
+	dev = device_get(index);
+
+out:
+	globfree(&g);
+	return dev;
+}
+
 void device_update(struct device *dev)
 {
-	struct device *master;
+	struct device *master, *odev;
 
 	if (!init_done)
 		return;
@@ -181,6 +211,13 @@ void device_update(struct device *dev)
 		  master ? master->ifname : "(none)");
 
 	dev->master = master;
+
+	odev = device_get_offload_dev(dev);
+	if (odev != dev->offload_dev)
+		D("Set device %s offload device to %s\n", dev->ifname,
+		  odev ? odev->ifname : "(none)");
+
+	dev->offload_dev = odev;
 }
 
 static int device_vlan_index(struct device *dev, int id)
