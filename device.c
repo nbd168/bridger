@@ -91,33 +91,9 @@ uint16_t device_vlan_get_output(struct device *dev, int vid)
 	return 0;
 }
 
-static int
-device_read_sysfs(char *buf, size_t len, const char *dev, const char *file)
-{
-	int ret, fd;
-
-	snprintf(buf, len, "/sys/class/net/%s/%s", dev, file);
-
-	fd = open(buf, O_RDONLY);
-	if (fd < 0)
-		return fd;
-
-	do {
-		ret = read(fd, buf, len - 1);
-	} while (ret < 0 && errno == EINTR);
-
-	close(fd);
-
-	if (ret >= 0)
-		buf[ret] = 0;
-
-	return ret;
-}
-
 struct device *device_create(int ifindex, enum device_type type, const char *name)
 {
 	struct device *dev;
-	char buf[128];
 
 	dev = device_get(ifindex);
 	if (dev) {
@@ -144,11 +120,6 @@ struct device *device_create(int ifindex, enum device_type type, const char *nam
 		dev->br = br;
 		br->dev = dev;
 	}
-
-	if (device_read_sysfs(buf, sizeof(buf), name, "phys_switch_id") > 0)
-		dev->phys_switch_id = atoi(buf);
-	else
-		dev->phys_switch_id = -1;
 
 out:
 	snprintf(dev->ifname, sizeof(dev->ifname), "%s", name);

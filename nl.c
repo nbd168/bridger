@@ -103,6 +103,14 @@ handle_newlink(struct nlmsghdr *nh)
 
 		if (tb[IFLA_AF_SPEC])
 			handle_newlink_brvlan(dev, tb[IFLA_AF_SPEC]);
+	} else {
+		if ((cur = tb[IFLA_PHYS_SWITCH_ID]) != NULL &&
+			nla_len(cur) <= sizeof(dev->phys_switch_id)) {
+			memcpy(dev->phys_switch_id, nla_data(cur), nla_len(cur));
+			dev->phys_switch_id_len = nla_len(cur);
+		} else {
+			dev->phys_switch_id_len = 0;
+		}
 	}
 
 	if (tbi[IFLA_INFO_DATA] && type == DEVICE_TYPE_BRIDGE) {

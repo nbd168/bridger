@@ -25,7 +25,8 @@ struct device {
 
 	struct bridge *br;
 
-	int phys_switch_id;
+	uint8_t phys_switch_id[32];
+	uint8_t phys_switch_id_len;
 	int pvid;
 
 	int n_vlans;
@@ -60,6 +61,15 @@ void bridger_device_stop(void);
 static inline int device_ifindex(struct device *dev)
 {
 	return (uintptr_t)dev->node.key;
+}
+
+static inline bool
+device_match_phys_switch(struct device *dev1, struct device *dev2)
+{
+	return dev1->phys_switch_id_len &&
+	       dev1->phys_switch_id_len == dev2->phys_switch_id_len &&
+	       !memcmp(dev1->phys_switch_id, dev2->phys_switch_id,
+		       dev1->phys_switch_id_len);
 }
 
 enum device_type device_lookup_type(const char *type);

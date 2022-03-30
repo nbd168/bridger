@@ -91,8 +91,7 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 		return;
 
 	if (fdb_in->dev == fdb_out->dev ||
-	    (fdb_in->dev->phys_switch_id >= 0 &&
-	     fdb_in->dev->phys_switch_id == fdb_out->dev->phys_switch_id))
+	    device_match_phys_switch(fdb_in->dev, fdb_out->dev))
 		return;
 
 	flow = avl_find_element(&flows, key, flow, node);
