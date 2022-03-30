@@ -348,7 +348,7 @@ int bridger_nl_init(void)
 	event_fd.cb = bridger_nl_sock_cb;
 	uloop_fd_add(&event_fd, ULOOP_READ);
 
-	nl_send_simple(event_sock, RTM_GETLINK, NLM_F_DUMP, &llmsg, sizeof(llmsg));
+	nl_send_simple(event_sock, RTM_GETLINK, NLM_F_DUMP | NLM_F_REQUEST, &llmsg, sizeof(llmsg));
 	nl_wait_for_ack(event_sock);
 
 	msg = nlmsg_alloc_simple(RTM_GETVLAN, NLM_F_REQUEST | NLM_F_DUMP);
@@ -358,7 +358,7 @@ int bridger_nl_init(void)
 	nlmsg_free(msg);
 	nl_wait_for_ack(event_sock);
 
-	nl_send_simple(event_sock, RTM_GETNEIGH, NLM_F_DUMP, &ndmsg, sizeof(ndmsg));
+	nl_send_simple(event_sock, RTM_GETNEIGH, NLM_F_DUMP | NLM_F_REQUEST, &ndmsg, sizeof(ndmsg));
 	nl_wait_for_ack(event_sock);
 
 	return 0;
