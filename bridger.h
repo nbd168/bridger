@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) 2021 Felix Fietkau <nbd@nbd.name>
+ * Copyright (C) 2022 Felix Fietkau <nbd@nbd.name>
  */
 #ifndef __BRIDGER_H
 #define __BRIDGER_H
@@ -23,6 +23,7 @@
 #include "flow.h"
 #include "fdb.h"
 #include "bpf.h"
+#include "nl.h"
 
 #define D(format, ...) \
 	do { \
@@ -38,6 +39,16 @@
 
 #define BRIDGER_EWMA_SHIFT	8
 
+#define BRIDGER_PRIO_BPF	0xbb00
+
+#define BRIDGER_PRIO_OFFLOAD_8021Q	0xbb01
+#define BRIDGER_PRIO_OFFLOAD_8021AD	0xbb02
+#define BRIDGER_PRIO_OFFLOAD_UNTAG	0xbb03
+
+#define BRIDGER_PRIO_OFFLOAD_START	BRIDGER_PRIO_OFFLOAD_8021Q
+#define BRIDGER_PRIO_OFFLOAD_END	BRIDGER_PRIO_OFFLOAD_UNTAG
+
+
 extern int debug_level;
 
 static inline void bridger_ewma(uint64_t *avg, uint32_t val)
@@ -48,11 +59,6 @@ static inline void bridger_ewma(uint64_t *avg, uint32_t val)
 		*avg = (uint64_t)val << BRIDGER_EWMA_SHIFT;
 }
 
-int bridger_nl_init(void);
 const char *format_macaddr(const uint8_t *mac);
-
-int bridger_nl_device_attach(struct device *dev);
-void bridger_nl_device_detach(struct device *dev);
-int bridger_nl_fdb_refresh(struct fdb_entry *f);
 
 #endif

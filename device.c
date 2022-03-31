@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) 2021 Felix Fietkau <nbd@nbd.name>
+ * Copyright (C) 2022 Felix Fietkau <nbd@nbd.name>
  */
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <glob.h>
 #include <libubox/utils.h>
+#include <libubox/uloop.h>
 #include "bridger.h"
 
 static int device_avl_cmp(const void *k1, const void *k2, void *ptr)
@@ -15,7 +16,12 @@ static int device_avl_cmp(const void *k1, const void *k2, void *ptr)
 	return (uintptr_t)k1 - (uintptr_t)k2;
 }
 
+static void bridger_device_update_cb(struct uloop_timeout *t);
+
 static AVL_TREE(devices, device_avl_cmp, false, NULL);
+static struct uloop_timeout update_timer = {
+	.cb = bridger_device_update_cb,
+};
 static bool init_done = false;
 
 static const char * const device_types[__DEVICE_TYPE_MAX] = {
@@ -112,6 +118,8 @@ struct device *device_create(int ifindex, enum device_type type, const char *nam
 	avl_insert(&devices, &dev->node);
 	INIT_LIST_HEAD(&dev->fdb_entries);
 	INIT_LIST_HEAD(&dev->member_list);
+	if (!init_done)
+		dev->cleanup = true;
 
 	if (type == DEVICE_TYPE_BRIDGE) {
 		struct bridge *br = calloc(1, sizeof(*br));
@@ -180,10 +188,15 @@ out:
 
 void device_update(struct device *dev)
 {
-	struct device *master, *odev;
+	dev->update = true;
 
-	if (!init_done)
-		return;
+	if (init_done)
+		uloop_timeout_set(&update_timer, 1);
+}
+
+static void __device_update(struct device *dev)
+{
+	struct device *master, *odev;
 
 	device_clear_flows(dev);
 	master = device_get(dev->master_ifindex);
@@ -218,6 +231,22 @@ void device_update(struct device *dev)
 		  odev ? odev->ifname : "(none)");
 
 	dev->offload_dev = odev;
+}
+
+static void bridger_device_update_cb(struct uloop_timeout *t)
+{
+	struct device *dev;
+
+	avl_for_each_element(&devices, dev, node)
+		__device_update(dev);
+}
+
+void device_reset_offload_update(void)
+{
+	struct device *dev;
+
+	avl_for_each_element(&devices, dev, node)
+		dev->offload_update = true;
 }
 
 static int device_vlan_index(struct device *dev, int id)
@@ -294,12 +323,9 @@ void device_vlan_remove(struct device *dev, int id)
 
 int bridger_device_init(void)
 {
-	struct device *dev;
-
 	init_done = true;
 
-	avl_for_each_element(&devices, dev, node)
-		device_update(dev);
+	uloop_timeout_set(&update_timer, 1);
 
 	return 0;
 }

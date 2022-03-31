@@ -46,6 +46,7 @@ void bridger_flow_delete(struct bridger_flow *flow)
 	__bridger_flow_delete(flow);
 	avl_delete(&flows, &flow->node);
 	bridger_bpf_flow_delete(flow);
+	bridger_nl_flow_offload_del(flow);
 }
 
 void bridger_check_pending_flow(struct bridger_flow_key *key,
@@ -115,6 +116,7 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	flow->offload.vlan = device_vlan_get_output(fdb_out->dev, fkey.vlan);
 
 	bridger_bpf_flow_upload(flow);
+	bridger_nl_flow_offload_add(flow);
 
 	avl_insert(&sorted_flows, &flow->sort_node);
 }
@@ -124,7 +126,7 @@ bridger_flow_update_cb(struct uloop_timeout *timeout)
 {
 	struct bridger_flow *flow, *tmp;
 
-	uloop_timeout_set(timeout, 1000);
+	device_reset_offload_update();
 
 	avl_for_each_element(&flows, flow, node) {
 		flow->fdb_in->updated = false;
@@ -134,6 +136,7 @@ bridger_flow_update_cb(struct uloop_timeout *timeout)
 	avl_for_each_element_safe(&flows, flow, node, tmp) {
 		avl_delete(&sorted_flows, &flow->sort_node);
 		bridger_bpf_flow_update(flow);
+		bridger_nl_flow_offload_update(flow);
 		avl_insert(&sorted_flows, &flow->sort_node);
 
 		flow_debug_msg(flow, "Update");
@@ -149,6 +152,8 @@ bridger_flow_update_cb(struct uloop_timeout *timeout)
 		bridger_nl_fdb_refresh(flow->fdb_in);
 		bridger_nl_fdb_refresh(flow->fdb_out);
 	}
+
+	uloop_timeout_set(timeout, 1000);
 }
 
 int bridger_flow_init(void)

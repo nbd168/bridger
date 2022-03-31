@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) 2021 Felix Fietkau <nbd@nbd.name>
+ * Copyright (C) 2022 Felix Fietkau <nbd@nbd.name>
  */
 #define _GNU_SOURCE
 #include <sys/socket.h>
@@ -10,11 +10,25 @@
 #include <netlink/socket.h>
 #include <linux/rtnetlink.h>
 #include <linux/if_bridge.h>
+#include <linux/pkt_cls.h>
+#include <linux/tc_act/tc_vlan.h>
+#include <linux/tc_act/tc_mirred.h>
 #include "bridger.h"
 
 static struct nl_sock *event_sock;
 static struct uloop_fd event_fd;
 static struct uloop_timeout refresh_linkinfo;
+static bool ignore_errors;
+
+static int offload_handle_cmp(const void *k1, const void *k2, void *ptr)
+{
+	uint32_t v1 = (uint32_t)(uintptr_t)k1;
+	uint32_t v2 = (uint32_t)(uintptr_t)k2;
+
+	return memcmp(&v1, &v2, sizeof(v1));
+}
+
+static AVL_TREE(offload_flows, offload_handle_cmp, false, NULL);
 
 static void
 handle_newlink_brvlan(struct device *dev, struct nlattr *info)
@@ -229,6 +243,68 @@ handle_vlan(struct nlmsghdr *nh, bool add)
 	uloop_timeout_set(&refresh_linkinfo, 10);
 }
 
+static void
+handle_filter(struct nlmsghdr *nh)
+{
+	struct tcmsg *t = NLMSG_DATA(nh);
+	struct nlattr *tb[__TCA_MAX];
+	struct nlattr *tbf[__TCA_FLOWER_MAX];
+	struct nlattr *tba[__TCA_ACT_MAX];
+	struct nlattr *tbm[__TCA_MIRRED_MAX];
+	struct nlattr *cur;
+	struct bridger_flow *flow;
+	const struct tcf_t *tm;
+	const void *key;
+	int prio = t->tcm_info >> 16;
+	int hz = sysconf(_SC_CLK_TCK);
+	int idle;
+	int rem;
+
+	if (t->tcm_parent != TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS) ||
+	    prio < BRIDGER_PRIO_OFFLOAD_START ||
+	    prio > BRIDGER_PRIO_OFFLOAD_END || !t->tcm_handle)
+		return;
+
+	nlmsg_parse(nh, sizeof(struct tcmsg), tb, TCA_MAX, NULL);
+	if (!tb[TCA_KIND] || !tb[TCA_OPTIONS])
+		return;
+
+	if (strcmp(nla_data(tb[TCA_KIND]), "flower") != 0)
+		return;
+
+	key = (const void *)(uintptr_t)t->tcm_handle;
+	flow = avl_find_element(&offload_flows, key, flow, offload_node);
+	if (!flow)
+		return;
+
+	nla_parse_nested(tbf, TCA_FLOWER_MAX, tb[TCA_OPTIONS], NULL);
+	if (!tbf[TCA_FLOWER_ACT])
+		return;
+
+	nla_for_each_nested(cur, tbf[TCA_FLOWER_ACT], rem) {
+		nla_parse_nested(tba, TCA_ACT_MAX, cur, NULL);
+		if (!tba[TCA_ACT_KIND] || !tba[TCA_ACT_STATS] ||
+		    !tba[TCA_ACT_OPTIONS])
+			continue;
+
+		if (strcmp(nla_data(tba[TCA_ACT_KIND]), "mirred") != 0)
+			continue;
+
+		goto check_action;
+	}
+	return;
+
+check_action:
+	nla_parse_nested(tbm, TCA_MIRRED_MAX, tba[TCA_ACT_OPTIONS], NULL);
+	if (!tbm[TCA_MIRRED_TM])
+		return;
+
+	tm = (const struct tcf_t *)nla_data(tbm[TCA_MIRRED_TM]);
+	idle = tm->lastuse / hz;
+	if (idle < flow->idle)
+		flow->idle = idle;
+}
+
 static int
 bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 {
@@ -252,6 +328,9 @@ bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 		break;
 	case RTM_DELVLAN:
 		handle_vlan(nh, false);
+		break;
+	case RTM_NEWTFILTER:
+		handle_filter(nh);
 		break;
 	default:
 		break;
@@ -285,26 +364,326 @@ static int bridger_nl_set_bpf_prog(int ifindex, int fd)
 	DECLARE_LIBBPF_OPTS(bpf_tc_opts, attach_ingress,
 			    .flags = BPF_TC_F_REPLACE,
 			    .handle = 1,
-			    .priority = 0xc001);
+			    .priority = BRIDGER_PRIO_BPF);
 
 	bpf_tc_hook_create(&hook);
-	if (fd < 0) {
-		bpf_tc_detach(&hook, &attach_ingress);
-		return 0;
+	attach_ingress.prog_fd = fd;
+
+	return bpf_tc_attach(&hook, &attach_ingress);
+}
+
+static void
+bridger_nl_del_filter(struct device *dev, unsigned int prio)
+{
+	struct tcmsg tcmsg = {
+		.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS),
+		.tcm_family = AF_UNSPEC,
+		.tcm_ifindex = device_ifindex(dev),
+		.tcm_info = TC_H_MAKE(prio << 16, 0),
+	};
+	struct nl_msg *msg;
+
+	msg = nlmsg_alloc_simple(RTM_DELTFILTER, NLM_F_REQUEST);
+	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
+	nl_send_auto_complete(event_sock, msg);
+	nlmsg_free(msg);
+	ignore_errors = true;
+	nl_wait_for_ack(event_sock);
+	ignore_errors = false;
+}
+
+static void
+bridger_nl_device_clear_offload(struct device *dev)
+{
+	int i;
+
+	for (i = BRIDGER_PRIO_OFFLOAD_START; i <= BRIDGER_PRIO_OFFLOAD_END; i++)
+		bridger_nl_del_filter(dev, i);
+}
+
+static void
+bridger_nl_device_cleanup(struct device *dev)
+{
+	while ((dev = dev->offload_dev) != NULL) {
+		if (!dev->cleanup)
+			continue;
+
+		bridger_nl_device_clear_offload(dev);
+		dev->cleanup = false;
+	}
+}
+
+static void
+bridger_nl_device_prepare(struct device *dev)
+{
+	struct tcmsg tcmsg = {
+		.tcm_parent = TC_H_CLSACT,
+		.tcm_handle = TC_H_MAKE(TC_H_CLSACT, 0),
+		.tcm_family = AF_UNSPEC,
+		.tcm_ifindex = device_ifindex(dev),
+	};
+	struct nl_msg *msg;
+
+	if (dev->has_clsact)
+		return;
+
+	dev->has_clsact = true;
+	msg = nlmsg_alloc_simple(RTM_NEWQDISC, NLM_F_CREATE | NLM_F_EXCL);
+	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
+	nla_put_string(msg, TCA_KIND, "clsact");
+	nl_send_auto_complete(event_sock, msg);
+	nlmsg_free(msg);
+	ignore_errors = true;
+	nl_wait_for_ack(event_sock);
+	ignore_errors = false;
+}
+
+static uint16_t
+bridger_nl_offload_prio(uint16_t vlan)
+{
+	switch (vlan & BRIDGER_VLAN_FLAGS) {
+	case BRIDGER_VLAN_PRESENT | BRIDGER_VLAN_TYPE_AD:
+		return BRIDGER_PRIO_OFFLOAD_8021AD;
+	case BRIDGER_VLAN_PRESENT:
+		return BRIDGER_PRIO_OFFLOAD_8021Q;
+	default:
+		return BRIDGER_PRIO_OFFLOAD_UNTAG;
+	}
+}
+
+static uint16_t
+bridger_vlan_proto(uint16_t vlan)
+{
+	switch (vlan & BRIDGER_VLAN_FLAGS) {
+	case BRIDGER_VLAN_PRESENT | BRIDGER_VLAN_TYPE_AD:
+		return cpu_to_be16(ETH_P_8021AD);
+	case BRIDGER_VLAN_PRESENT:
+		return cpu_to_be16(ETH_P_8021Q);
+	default:
+		return cpu_to_be16(ETH_P_ALL);
+	}
+}
+
+static uint32_t bridger_nl_flow_handle(struct bridger_flow *flow)
+{
+	return (uint32_t)((uintptr_t)flow >> 3);
+}
+
+static struct nl_msg *
+bridger_nl_flow_offload_msg(struct bridger_flow *flow, int ifindex, int cmd)
+{
+	struct tcmsg tcmsg = {
+		.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS),
+		.tcm_family = AF_UNSPEC,
+		.tcm_ifindex = ifindex,
+		.tcm_handle = bridger_nl_flow_handle(flow),
+	};
+	unsigned int flags = NLM_F_REQUEST;
+	unsigned int prio, proto;
+	struct nl_msg *msg;
+
+	prio = bridger_nl_offload_prio(flow->key.vlan);
+	proto = bridger_vlan_proto(flow->key.vlan);
+	tcmsg.tcm_info = TC_H_MAKE(prio << 16, proto);
+
+	if (cmd == RTM_NEWTFILTER)
+		flags |= NLM_F_CREATE | NLM_F_EXCL;
+
+	msg = nlmsg_alloc_simple(cmd, flags);
+	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
+	nla_put_string(msg, TCA_KIND, "flower");
+
+	return msg;
+}
+
+static int
+__bridger_nl_flow_offload_add(struct bridger_flow *flow, struct device *dev)
+{
+	uint8_t mask[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+	static const struct nla_bitfield32 hw_stats = {
+		.value = TCA_ACT_HW_STATS_IMMEDIATE,
+		.selector = TCA_ACT_HW_STATS_IMMEDIATE,
+	};
+	struct tc_mirred m = {
+		.ifindex = device_ifindex(flow->fdb_out->dev),
+		.eaction = TCA_EGRESS_REDIR,
+	};
+	struct nlattr *opts, *acts, *act, *aopt;
+	struct nl_msg *msg;
+	int act_index = 0;
+	int ifindex;
+	int proto;
+
+	bridger_nl_device_prepare(dev);
+
+	ifindex = device_ifindex(dev);
+	proto = bridger_vlan_proto(flow->key.vlan);
+	msg = bridger_nl_flow_offload_msg(flow, ifindex, RTM_NEWTFILTER);
+
+	opts = nla_nest_start(msg, TCA_OPTIONS);
+
+	nla_put_u32(msg, TCA_FLOWER_FLAGS, TCA_CLS_FLAGS_SKIP_SW);
+	nla_put_string(msg, TCA_FLOWER_INDEV, dev->ifname);
+	if (flow->key.vlan & BRIDGER_VLAN_PRESENT)
+		nla_put_u16(msg, TCA_FLOWER_KEY_VLAN_ID, flow->key.vlan & BRIDGER_VLAN_ID);
+	nla_put(msg, TCA_FLOWER_KEY_ETH_SRC, ETH_ALEN, flow->key.src);
+	nla_put(msg, TCA_FLOWER_KEY_ETH_SRC_MASK, ETH_ALEN, mask);
+	nla_put(msg, TCA_FLOWER_KEY_ETH_DST, ETH_ALEN, flow->key.dest);
+	nla_put(msg, TCA_FLOWER_KEY_ETH_DST_MASK, ETH_ALEN, mask);
+	if (flow->key.vlan & BRIDGER_VLAN_PRESENT)
+		nla_put_u16(msg, TCA_FLOWER_KEY_ETH_TYPE, proto);
+
+	acts = nla_nest_start(msg, TCA_FLOWER_ACT);
+
+	if (flow->key.vlan != flow->offload.vlan) {
+		if (flow->key.vlan & BRIDGER_VLAN_PRESENT) {
+			static const struct tc_vlan tcv = {
+				.action = TC_ACT_PIPE,
+				.v_action = TCA_VLAN_ACT_POP,
+			};
+			act = nla_nest_start(msg, ++act_index);
+			nla_put_string(msg, TCA_ACT_KIND, "vlan");
+
+			aopt = nla_nest_start(msg, TCA_ACT_OPTIONS);
+			nla_put(msg, TCA_VLAN_PARMS, sizeof(tcv), &tcv);
+			nla_nest_end(msg, aopt);
+			nla_nest_end(msg, act);
+		}
+
+		if (flow->offload.vlan & BRIDGER_VLAN_PRESENT) {
+			static const struct tc_vlan tcv = {
+				.action = TC_ACT_PIPE,
+				.v_action = TCA_VLAN_ACT_PUSH,
+			};
+			act = nla_nest_start(msg, ++act_index);
+			nla_put_string(msg, TCA_ACT_KIND, "vlan");
+
+			aopt = nla_nest_start(msg, TCA_ACT_OPTIONS);
+			nla_put(msg, TCA_VLAN_PARMS, sizeof(tcv), &tcv);
+
+			nla_put_u16(msg, TCA_VLAN_PUSH_VLAN_ID,
+				   flow->offload.vlan & BRIDGER_VLAN_ID);
+			nla_put_u16(msg, TCA_VLAN_PUSH_VLAN_PROTOCOL,
+				    bridger_vlan_proto(flow->offload.vlan));
+
+			nla_nest_end(msg, aopt);
+			nla_nest_end(msg, act);
+		}
 	}
 
-	attach_ingress.prog_fd = fd;
-	return bpf_tc_attach(&hook, &attach_ingress);
+	act = nla_nest_start(msg, ++act_index);
+	nla_put_string(msg, TCA_ACT_KIND, "mirred");
+
+	nla_put(msg, TCA_ACT_HW_STATS, sizeof(hw_stats), &hw_stats);
+	aopt = nla_nest_start(msg, TCA_ACT_OPTIONS);
+	nla_put(msg, TCA_MIRRED_PARMS, sizeof(m), &m);
+	nla_nest_end(msg, aopt);
+	nla_nest_end(msg, act);
+
+	nla_nest_end(msg, acts);
+
+	nla_nest_end(msg, opts);
+
+	nl_send_auto_complete(event_sock, msg);
+	nlmsg_free(msg);
+
+	return nl_wait_for_ack(event_sock);
+}
+
+int bridger_nl_flow_offload_add(struct bridger_flow *flow)
+{
+	struct device *dev;
+	int ifindex;
+	int ret = -1;
+
+	if (flow->offload_ifindex)
+		bridger_nl_flow_offload_del(flow);
+
+	for (dev = flow->fdb_in->dev; dev; dev = dev->offload_dev) {
+		ifindex = device_ifindex(dev);
+		ret = __bridger_nl_flow_offload_add(flow, dev);
+		D("Add flow on %s: %s\n", dev->ifname, ret ? strerror(-ret) : "Success");
+		if (!ret)
+			break;
+	}
+
+	if (ret)
+		return ret;
+
+	flow->offload_ifindex = ifindex;
+	flow->offload_node.key = (void *)(uintptr_t)bridger_nl_flow_handle(flow);
+	avl_insert(&offload_flows, &flow->offload_node);
+
+	return 0;
+}
+
+void bridger_nl_flow_offload_update(struct bridger_flow *flow)
+{
+	struct tcmsg tcmsg = {
+		.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS),
+		.tcm_family = AF_UNSPEC,
+		.tcm_ifindex = flow->offload_ifindex,
+	};
+	struct nl_msg *msg;
+	struct device *dev;
+
+	if (!flow->offload_ifindex)
+		return;
+
+	dev = device_get(flow->offload_ifindex);
+	if (!dev)
+		return;
+
+	if (!dev->offload_update)
+		return;
+
+	dev->offload_update = false;
+	msg = nlmsg_alloc_simple(RTM_GETTFILTER, NLM_F_REQUEST | NLM_F_DUMP);
+	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
+	nl_send_auto_complete(event_sock, msg);
+	nlmsg_free(msg);
+	nl_wait_for_ack(event_sock);
+}
+
+void bridger_nl_flow_offload_del(struct bridger_flow *flow)
+{
+	struct nl_msg *msg;
+	int ifindex;
+
+	ifindex = flow->offload_ifindex;
+	if (!ifindex)
+		return;
+
+	avl_delete(&offload_flows, &flow->offload_node);
+	flow->offload_ifindex = 0;
+	msg = bridger_nl_flow_offload_msg(flow, ifindex, RTM_DELTFILTER);
+	nl_send_auto_complete(event_sock, msg);
+	nlmsg_free(msg);
+
+	ignore_errors = true;
+	nl_wait_for_ack(event_sock);
+	ignore_errors = false;
 }
 
 int bridger_nl_device_attach(struct device *dev)
 {
-	return bridger_nl_set_bpf_prog(device_ifindex(dev), bridger_bpf_prog_fd);
+	int ret;
+
+	bridger_nl_device_detach(dev);
+	bridger_nl_device_cleanup(dev);
+
+	ret = bridger_nl_set_bpf_prog(device_ifindex(dev), bridger_bpf_prog_fd);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 void bridger_nl_device_detach(struct device *dev)
 {
-	bridger_nl_set_bpf_prog(device_ifindex(dev), -1);
+	dev->cleanup = false;
+	bridger_nl_del_filter(dev, BRIDGER_PRIO_BPF);
+	bridger_nl_device_clear_offload(dev);
 }
 
 int bridger_nl_fdb_refresh(struct fdb_entry *f)
@@ -338,12 +717,45 @@ int bridger_nl_fdb_refresh(struct fdb_entry *f)
 	return ret;
 }
 
+static int
+bridge_nl_error_cb(struct sockaddr_nl *nla, struct nlmsgerr *err,
+		   void *arg)
+{
+	struct nlmsghdr *nlh = (struct nlmsghdr *) err - 1;
+	struct nlattr *tb[NLMSGERR_ATTR_MAX + 1];
+	struct nlattr *attrs;
+	int ack_len = sizeof(*nlh) + sizeof(int) + sizeof(*nlh);
+	int len = nlh->nlmsg_len;
+	const char *errstr = "(unknown)";
+
+	if (ignore_errors)
+		return NL_STOP;
+
+	if (!(nlh->nlmsg_flags & NLM_F_ACK_TLVS))
+		return NL_STOP;
+
+	if (!(nlh->nlmsg_flags & NLM_F_CAPPED))
+		ack_len += err->msg.nlmsg_len - sizeof(*nlh);
+
+	attrs = (void *) ((unsigned char *) nlh + ack_len);
+	len -= ack_len;
+
+	nla_parse(tb, NLMSGERR_ATTR_MAX, attrs, len, NULL);
+	if (tb[NLMSGERR_ATTR_MSG])
+		errstr = nla_data(tb[NLMSGERR_ATTR_MSG]);
+
+	D("Netlink error(%d): %s\n", err->error, errstr);
+
+	return NL_STOP;
+}
+
 int bridger_nl_init(void)
 {
 	static struct rtgenmsg llmsg = { .rtgen_family = AF_UNSPEC };
 	static struct ndmsg ndmsg = { .ndm_family = PF_BRIDGE };
 	static struct br_vlan_msg bvmsg = { .family = PF_BRIDGE };
 	struct nl_msg *msg;
+	int opt;
 
 	refresh_linkinfo.cb = bridger_refresh_linkinfo_cb;
 
@@ -358,6 +770,8 @@ int bridger_nl_init(void)
 	nl_socket_set_buffer_size(event_sock, 65536, 0);
 	nl_socket_modify_cb(event_sock, NL_CB_VALID, NL_CB_CUSTOM,
 			    bridger_nl_event_cb, NULL);
+	nl_cb_err(nl_socket_get_cb(event_sock), NL_CB_CUSTOM,
+		  bridge_nl_error_cb, NULL);
 	nl_socket_add_membership(event_sock, RTNLGRP_LINK);
 	nl_socket_add_membership(event_sock, RTNLGRP_NEIGH);
 	nl_socket_add_membership(event_sock, RTNLGRP_BRVLAN);
@@ -365,6 +779,14 @@ int bridger_nl_init(void)
 	event_fd.fd = nl_socket_get_fd(event_sock);
 	event_fd.cb = bridger_nl_sock_cb;
 	uloop_fd_add(&event_fd, ULOOP_READ);
+
+	opt = 1;
+	setsockopt(event_fd.fd, SOL_NETLINK,
+		   NETLINK_EXT_ACK, &opt, sizeof(opt));
+
+	opt = 1;
+	setsockopt(event_fd.fd, SOL_NETLINK,
+		   NETLINK_CAP_ACK, &opt, sizeof(opt));
 
 	nl_send_simple(event_sock, RTM_GETLINK, NLM_F_DUMP | NLM_F_REQUEST, &llmsg, sizeof(llmsg));
 	nl_wait_for_ack(event_sock);

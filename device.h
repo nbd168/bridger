@@ -17,6 +17,11 @@ struct device {
 
 	uint8_t addr[ETH_ALEN];
 
+	bool has_clsact;
+	bool update;
+	bool cleanup;
+	bool offload_update;
+
 	struct device *master;
 	struct device *offload_dev;
 
@@ -82,6 +87,7 @@ void device_vlan_remove(struct device *dev, int id);
 int device_vlan_get_input(struct device *dev, uint16_t xdp_vlan);
 uint16_t device_vlan_get_output(struct device *dev, int vid);
 void device_update(struct device *dev);
+void device_reset_offload_update(void);
 void device_free(struct device *dev);
 
 #endif

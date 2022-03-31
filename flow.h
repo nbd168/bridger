@@ -4,12 +4,16 @@
 struct bridger_flow {
 	struct avl_node node;
 	struct avl_node sort_node;
+	struct avl_node offload_node;
 	struct bridger_flow_key key;
 	struct bridger_offload_flow offload;
 
 	uint64_t avg_packets;
 	uint64_t cur_packets;
 	int idle;
+
+	uint16_t offload_ifindex;
+	uint16_t offload_id;
 
 	struct fdb_entry *fdb_in, *fdb_out;
 	struct list_head fdb_in_list, fdb_out_list;
