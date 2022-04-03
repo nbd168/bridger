@@ -20,9 +20,13 @@ bool bridger_ubus_dev_blacklisted(struct device *dev)
 	int rem;
 
 	kvlist_for_each(&blacklist, name, list)
-		blobmsg_for_each_attr(cur, list, rem)
+		blobmsg_for_each_attr(cur, list, rem) {
 			if (!fnmatch(blobmsg_get_string(cur), dev->ifname, 0))
 				return true;
+			if (dev->master &&
+			    !fnmatch(blobmsg_get_string(cur), dev->master->ifname, 0))
+				return true;
+		}
 
 	return false;
 }
