@@ -18,7 +18,7 @@ static int device_avl_cmp(const void *k1, const void *k2, void *ptr)
 
 static void bridger_device_update_cb(struct uloop_timeout *t);
 
-static AVL_TREE(devices, device_avl_cmp, false, NULL);
+AVL_TREE(devices, device_avl_cmp, false, NULL);
 static struct uloop_timeout update_timer = {
 	.cb = bridger_device_update_cb,
 };
@@ -197,6 +197,7 @@ void device_update(struct device *dev)
 static void __device_update(struct device *dev)
 {
 	struct device *master, *odev;
+	bool attach;
 
 	device_clear_flows(dev);
 	master = device_get(dev->master_ifindex);
@@ -212,18 +213,21 @@ static void __device_update(struct device *dev)
 			master = NULL;
 	}
 
-	if (!!master != !!dev->master) {
-		if (master)
-			bridger_nl_device_attach(dev);
-		else
-			bridger_nl_device_detach(dev);
-	}
-
 	if (dev->master != master)
 		D("Set device %s master to %s\n", dev->ifname,
 		  master ? master->ifname : "(none)");
 
 	dev->master = master;
+
+	attach = dev->master && !bridger_ubus_dev_blacklisted(dev);
+	if (attach != dev->attached) {
+		D("%s device %s\n", attach ? "attach" : "detach", dev->ifname);
+		if (attach)
+			bridger_nl_device_attach(dev);
+		else
+			bridger_nl_device_detach(dev);
+		dev->attached = attach;
+	}
 
 	odev = device_get_offload_dev(dev);
 	if (odev != dev->offload_dev)

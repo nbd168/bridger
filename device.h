@@ -18,6 +18,7 @@ struct device {
 	uint8_t addr[ETH_ALEN];
 
 	bool has_clsact;
+	bool attached;
 	bool update;
 	bool cleanup;
 	bool offload_update;
@@ -78,6 +79,7 @@ device_match_phys_switch(struct device *dev1, struct device *dev2)
 		       dev1->phys_switch_id_len);
 }
 
+extern struct avl_tree devices;
 enum device_type device_lookup_type(const char *type);
 struct device *device_get(int ifindex);
 struct device *device_create(int ifindex, enum device_type type, const char *name);

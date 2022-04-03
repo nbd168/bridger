@@ -24,6 +24,7 @@
 #include "fdb.h"
 #include "bpf.h"
 #include "nl.h"
+#include "ubus.h"
 
 #define D(format, ...) \
 	do { \

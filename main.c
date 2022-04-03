@@ -45,9 +45,11 @@ int main(int argc, char **argv)
 
 	bridger_device_init();
 	bridger_flow_init();
+	bridger_ubus_init();
 
 	uloop_run();
 
+	bridger_ubus_stop();
 	bridger_device_stop();
 
 	uloop_done();
