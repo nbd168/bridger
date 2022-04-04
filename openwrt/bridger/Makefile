@@ -51,12 +51,16 @@ endef
 
 define Package/bridger/install
 	$(INSTALL_DIR) \
+		$(1)/etc/config \
+		$(1)/etc/init.d \
 		$(1)/lib/bpf \
 		$(1)/usr/sbin
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/bridger-bpf.o $(1)/lib/bpf
 	$(INSTALL_BIN) \
 		$(PKG_INSTALL_DIR)/usr/bin/bridger \
 		$(1)/usr/sbin/
+	$(INSTALL_DATA) ./files/bridger.conf $(1)/etc/config/bridger
+	$(INSTALL_BIN) ./files/bridger.init $(1)/etc/init.d/bridger
 endef
 
 $(eval $(call BuildPackage,bridger))
