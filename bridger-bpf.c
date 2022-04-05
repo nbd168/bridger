@@ -6,6 +6,8 @@
 #include <uapi/linux/bpf.h>
 #include <uapi/linux/pkt_cls.h>
 #include <uapi/linux/if_ether.h>
+#include <uapi/linux/ipv6.h>
+#include <uapi/linux/in6.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include "bridger-bpf.h"
@@ -40,15 +42,15 @@ static __always_inline int proto_is_vlan(__u16 h_proto)
 		  h_proto == bpf_htons(ETH_P_8021AD));
 }
 
-static __always_inline void *__skb_data(struct __sk_buff *skb, int offset)
+static __always_inline void *__skb_data(struct __sk_buff *skb)
 {
-	return (void *)(long)(skb->data + offset);
+	return (void *)(long)skb->data;
 }
 
 static __always_inline void *
 skb_ptr(struct __sk_buff *skb, int offset, int len)
 {
-	void *ptr = __skb_data(skb, offset);
+	void *ptr = __skb_data(skb) + offset;
 	void *end = (void *)(long)(skb->data_end);
 
 	if (ptr + len >= end)
@@ -129,6 +131,8 @@ int bridger_input(struct __sk_buff *skb)
 	struct bridger_flow_key key = {};
 	struct bridger_pending_flow pending;
 	struct ethhdr *eth;
+	__be16 proto;
+	bool vlan_hdr = false;
 	int ret;
 
 	eth = skb_ptr(skb, 0, sizeof(*eth) + sizeof(struct vlanhdr));
@@ -140,13 +144,34 @@ int bridger_input(struct __sk_buff *skb)
 
 	memcpy(&key, eth, 2 * ETH_ALEN);
 	key.ifindex = skb->ifindex;
+	proto = eth->h_proto;
 	if (skb->vlan_present) {
 		bridger_key_set_vlan(&key, skb->vlan_proto, skb->vlan_tci);
-	} else if (proto_is_vlan(eth->h_proto)) {
+	} else if (proto_is_vlan(proto)) {
 		struct vlanhdr *vlan = (void *)(eth + 1);
 
 		bridger_key_set_vlan(&key, eth->h_proto, bpf_ntohs(vlan->tci));
+		proto = vlan->encap_proto;
+		vlan_hdr = true;
 	}
+
+	if (proto == bpf_htons(ETH_P_CFM) || proto == bpf_htons(ETH_P_MRP) ||
+	    proto == bpf_htons(ETH_P_ARP) || proto == bpf_htons(ETH_P_802_2))
+		return TC_ACT_UNSPEC;
+
+	if (proto == bpf_htons(ETH_P_IPV6)) {
+		struct ipv6hdr *ip6hdr;
+		int ofs;
+
+		ofs = sizeof(*eth);
+		if (vlan_hdr)
+			ofs += sizeof(struct vlanhdr);
+
+		ip6hdr = skb_ptr(skb, ofs, sizeof(*ip6hdr));
+		if (!ip6hdr || ip6hdr->nexthdr == IPPROTO_ICMPV6)
+			return TC_ACT_UNSPEC;
+	}
+
 
 	ret = bridger_offload(skb, &key);
 	if (ret >= 0)
