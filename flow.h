@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ * Copyright (C) 2022 Felix Fietkau <nbd@nbd.name>
+ */
 #ifndef __BRIDGER_FLOW_H
 #define __BRIDGER_FLOW_H
 
