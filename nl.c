@@ -85,6 +85,7 @@ handle_newlink(struct nlmsghdr *nh)
 	struct nlattr *tb[__IFLA_MAX];
 	struct nlattr *tbi[__IFLA_INFO_MAX] = {};
 	struct nlattr *tbd[__IFLA_BR_MAX];
+	struct nlattr *tbp[__IFLA_BRPORT_MAX] = {};
 	struct nlattr *cur;
 	enum device_type type = DEVICE_TYPE_ETHERNET;
 	struct device *dev;
@@ -99,6 +100,9 @@ handle_newlink(struct nlmsghdr *nh)
 
 	if (tb[IFLA_LINKINFO])
 		nla_parse_nested(tbi, IFLA_INFO_MAX, tb[IFLA_LINKINFO], NULL);
+
+	if (tb[IFLA_PROTINFO])
+		nla_parse_nested(tbp, IFLA_BRPORT_MAX, tb[IFLA_PROTINFO], NULL);
 
 	if (tbi[IFLA_INFO_KIND])
 		type = device_lookup_type(nla_data(tbi[IFLA_INFO_KIND]));
@@ -137,6 +141,9 @@ handle_newlink(struct nlmsghdr *nh)
 		if ((cur = tbd[IFLA_BR_VLAN_PROTOCOL]) != NULL)
 			dev->br->vlan_proto = ntohs(nla_get_u16(cur));
 	}
+
+	if (tbp[IFLA_BRPORT_MODE])
+		dev->hairpin_mode = nla_get_u8(tb[IFLA_BRPORT_MODE]);
 
 	device_update(dev);
 }

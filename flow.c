@@ -95,8 +95,11 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (fdb_out->dev->br)
 		return;
 
-	if (fdb_in->dev == fdb_out->dev ||
-	    device_match_phys_switch(fdb_in->dev, fdb_out->dev))
+	if (device_match_phys_switch(fdb_in->dev, fdb_out->dev))
+		return;
+
+	if (fdb_in->dev == fdb_out->dev &&
+	    !fdb_in->dev->hairpin_mode)
 		return;
 
 	flow = avl_find_element(&flows, key, flow, node);
