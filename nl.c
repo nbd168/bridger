@@ -709,7 +709,8 @@ int bridger_nl_fdb_refresh(struct fdb_entry *f)
 	ndmsg.ndm_ifindex = device_ifindex(f->dev);
 	msg = nlmsg_alloc_simple(RTM_NEWNEIGH, NLM_F_REQUEST);
 	nlmsg_append(msg, &ndmsg, sizeof(ndmsg), NLMSG_ALIGNTO);
-	nla_put_u16(msg, NDA_VLAN, f->key.vlan);
+	if (f->key.vlan)
+		nla_put_u16(msg, NDA_VLAN, f->key.vlan);
 	nla_put(msg, NDA_LLADDR, ETH_ALEN, f->key.addr);
 	nl_send_auto_complete(event_sock, msg);
 	nlmsg_free(msg);
