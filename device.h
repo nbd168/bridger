@@ -26,6 +26,7 @@ struct device {
 	bool update;
 	bool cleanup;
 	bool hairpin_mode;
+	bool isolated;
 	bool offload_update;
 
 	struct device *master;
