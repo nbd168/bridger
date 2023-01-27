@@ -143,10 +143,10 @@ handle_newlink(struct nlmsghdr *nh)
 	}
 
 	if (tbp[IFLA_BRPORT_MODE])
-		dev->hairpin_mode = nla_get_u8(tb[IFLA_BRPORT_MODE]);
+		dev->hairpin_mode = nla_get_u8(tbp[IFLA_BRPORT_MODE]);
 
 	if (tbp[IFLA_BRPORT_ISOLATED])
-		dev->isolated = nla_get_u8(tb[IFLA_BRPORT_ISOLATED]);
+		dev->isolated = nla_get_u8(tbp[IFLA_BRPORT_ISOLATED]);
 
 	device_update(dev);
 }
