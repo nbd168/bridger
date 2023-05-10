@@ -180,7 +180,7 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 	struct nlattr *tb[__NDA_MAX];
 	struct fdb_key key = {};
 	struct fdb_entry *f;
-	struct device *dev;
+	struct device *dev, *mdev;
 	struct bridge *br;
 	const uint8_t *addr;
 
@@ -189,18 +189,26 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 		return;
 
 	nlmsg_parse(nh, sizeof(struct ndmsg), tb, NDA_MAX, NULL);
-	if (!tb[NDA_LLADDR] || !tb[NDA_MASTER])
+	if (!tb[NDA_LLADDR])
 		return;
 
 	addr = nla_data(tb[NDA_LLADDR]);
 	if (addr[0] & 1) /* skip multicast */
 		return;
 
-	dev = device_get(nla_get_u32(tb[NDA_MASTER]));
+	dev = device_get(r->ndm_ifindex);
 	if (!dev)
 		return;
 
 	br = dev->br;
+	if (tb[NDA_MASTER]) {
+		mdev = device_get(nla_get_u32(tb[NDA_MASTER]));
+		if (!mdev)
+			return;
+
+		br = mdev->br;
+	}
+
 	if (!br)
 		return;
 
@@ -215,7 +223,9 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 		return;
 	}
 
-	dev = device_get(r->ndm_ifindex);
+	if (r->ndm_state == NUD_PERMANENT && !dev->br)
+		return;
+
 	f = fdb_create(br, &key, dev);
 	f->ndm_state = r->ndm_state;
 }
@@ -366,10 +376,10 @@ static void bridger_refresh_linkinfo_cb(struct uloop_timeout *timeout)
 	nl_send_auto_complete(event_sock, msg);
 }
 
-static int bridger_nl_set_bpf_prog(int ifindex, int fd)
+static int bridger_nl_set_bpf_prog(int ifindex, int fd, bool ingress)
 {
 	DECLARE_LIBBPF_OPTS(bpf_tc_hook, hook,
-			    .attach_point = BPF_TC_INGRESS,
+			    .attach_point = ingress ? BPF_TC_INGRESS : BPF_TC_EGRESS,
 			    .ifindex = ifindex);
 	DECLARE_LIBBPF_OPTS(bpf_tc_opts, attach_ingress,
 			    .flags = BPF_TC_F_REPLACE,
@@ -682,7 +692,7 @@ int bridger_nl_device_attach(struct device *dev)
 	bridger_nl_device_detach(dev);
 	bridger_nl_device_cleanup(dev);
 
-	ret = bridger_nl_set_bpf_prog(device_ifindex(dev), bridger_bpf_prog_fd);
+	ret = bridger_nl_set_bpf_prog(device_ifindex(dev), bridger_bpf_prog_fd, !dev->br);
 	if (ret)
 		return ret;
 
@@ -706,7 +716,7 @@ int bridger_nl_fdb_refresh(struct fdb_entry *f)
 	struct nl_msg *msg;
 	int ret;
 
-	if (!f->dev || f->updated)
+	if (!f->dev || f->updated || (f->ndm_state & NUD_PERMANENT))
 		return 0;
 
 	ndmsg.ndm_ifindex = device_ifindex(f->dev);

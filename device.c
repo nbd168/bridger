@@ -53,15 +53,15 @@ struct device *device_get(int ifindex)
 
 int device_vlan_get_input(struct device *dev, uint16_t bpf_vlan)
 {
-	struct device *master = dev->master;
+	struct bridge *br = device_get_br(dev);
 	int i;
 
-	if (!master || !master->br || !master->br->vlan_enabled)
+	if (!br || !br->vlan_enabled)
 		return 0;
 
 	if (!(bpf_vlan & BRIDGER_VLAN_PRESENT) ||
 	    !!(bpf_vlan & BRIDGER_VLAN_TYPE_AD) !=
-	    (master->br->vlan_proto == ETH_P_8021AD))
+	    (br->vlan_proto == ETH_P_8021AD))
 		return dev->pvid;
 
 	bpf_vlan &= BRIDGER_VLAN_ID;
@@ -74,11 +74,11 @@ int device_vlan_get_input(struct device *dev, uint16_t bpf_vlan)
 
 uint16_t device_vlan_get_output(struct device *dev, int vid)
 {
-	struct device *master = dev->master;
+	struct bridge *br = device_get_br(dev);
 	uint16_t flags = 0;
 	int i;
 
-	if (!master || !master->br)
+	if (!br)
 		return 0;
 
 	for (i = 0; i < dev->n_vlans; i++) {
@@ -89,7 +89,7 @@ uint16_t device_vlan_get_output(struct device *dev, int vid)
 			return 0;
 
 		flags = BRIDGER_VLAN_PRESENT;
-		if (master->br->vlan_proto == ETH_P_8021AD)
+		if (br->vlan_proto == ETH_P_8021AD)
 			flags |= BRIDGER_VLAN_TYPE_AD;
 
 		return vid | flags;
@@ -219,7 +219,7 @@ static void __device_update(struct device *dev)
 
 	dev->master = master;
 
-	attach = dev->master && !bridger_ubus_dev_blacklisted(dev);
+	attach = (dev->master || dev->br) && !bridger_ubus_dev_blacklisted(dev);
 	if (attach != dev->attached) {
 		D("%s device %s\n", attach ? "attach" : "detach", dev->ifname);
 		if (attach)

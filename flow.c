@@ -63,17 +63,16 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	struct device *dev;
 	struct fdb_key fkey = {};
 
+	if (!memcmp(key->src, key->dest, ETH_ALEN))
+		return;
+
 	dev = device_get(key->ifindex);
-	if (!dev || dev->br || !dev->master || !dev->master->br)
+	if (!dev)
 		return;
 
-	if (!memcmp(key->src, dev->addr, ETH_ALEN) ||
-	    !memcmp(key->src, dev->master->addr, ETH_ALEN) ||
-	    !memcmp(key->dest, dev->addr, ETH_ALEN) ||
-	    !memcmp(key->dest, dev->master->addr, ETH_ALEN))
+	br = device_get_br(dev);
+	if (!br)
 		return;
-
-	br = dev->master->br;
 
 	memcpy(fkey.addr, key->src, ETH_ALEN);
 	fkey.vlan = device_vlan_get_input(dev, key->vlan);
@@ -90,9 +89,6 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	  fdb_out ? fdb_out->dev->ifname : "(unknown)");
 
 	if (!fdb_in || !fdb_out)
-		return;
-
-	if (fdb_out->dev->br)
 		return;
 
 	if (device_match_phys_switch(fdb_in->dev, fdb_out->dev))
@@ -124,6 +120,7 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 
 	flow->offload.target_port = device_ifindex(fdb_out->dev);
 	flow->offload.vlan = device_vlan_get_output(fdb_out->dev, fkey.vlan);
+	flow->offload.redirect_flags = fdb_out->dev->br ? BPF_F_INGRESS : 0;
 
 	bridger_bpf_flow_upload(flow);
 	bridger_nl_flow_offload_add(flow);

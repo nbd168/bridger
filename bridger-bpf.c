@@ -60,7 +60,7 @@ skb_ptr(struct __sk_buff *skb, int offset, int len)
 }
 
 static __always_inline int
-bridger_offload(struct __sk_buff *skb, struct bridger_flow_key *key)
+bridger_offload(struct __sk_buff *skb, struct bridger_flow_key *key, unsigned long *flags)
 {
 	struct bridger_offload_flow *offload;
 	struct vlanhdr *vlan;
@@ -96,6 +96,7 @@ bridger_offload(struct __sk_buff *skb, struct bridger_flow_key *key)
 	}
 
 	offload->packets++;
+	*flags = offload->redirect_flags;
 	return offload->target_port;
 }
 
@@ -130,6 +131,7 @@ int bridger_input(struct __sk_buff *skb)
 {
 	struct bridger_flow_key key = {};
 	struct bridger_pending_flow pending;
+	unsigned long flags = 0;
 	struct ethhdr *eth;
 	__be16 proto;
 	bool vlan_hdr = false;
@@ -173,9 +175,9 @@ int bridger_input(struct __sk_buff *skb)
 	}
 
 
-	ret = bridger_offload(skb, &key);
+	ret = bridger_offload(skb, &key, &flags);
 	if (ret >= 0)
-		return bpf_redirect(ret, 0);
+		return bpf_redirect(ret, flags);
 
 	bridger_update_pending_flow(skb, &key);
 

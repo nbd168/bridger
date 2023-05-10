@@ -31,6 +31,7 @@ struct bridger_offload_flow {
 	uint64_t packets;
 	uint32_t target_port;
 	uint16_t vlan;
+	uint16_t redirect_flags;
 };
 
 #endif

@@ -76,6 +76,14 @@ static inline int device_ifindex(struct device *dev)
 	return (uintptr_t)dev->node.key;
 }
 
+static inline struct bridge *device_get_br(struct device *dev)
+{
+	if (dev->master)
+		return dev->master->br;
+
+	return dev->br;
+}
+
 static inline bool
 device_match_phys_switch(struct device *dev1, struct device *dev2)
 {
