@@ -148,6 +148,7 @@ int bridger_input(struct __sk_buff *skb)
 	bool vlan_hdr = false;
 	int ret = -1;
 
+	bpf_skb_pull_data(skb, sizeof(*eth) + sizeof(struct vlanhdr));
 	eth = skb_ptr(skb, 0, sizeof(*eth) + sizeof(struct vlanhdr));
 	if (!eth)
 		return TC_ACT_UNSPEC;
