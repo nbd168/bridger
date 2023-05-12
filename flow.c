@@ -4,6 +4,7 @@
  */
 #include <inttypes.h>
 #include <stdlib.h>
+#include <linux/neighbour.h>
 #include "bridger.h"
 
 static struct uloop_timeout flow_update_timer;
@@ -78,11 +79,23 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	fkey.vlan = device_vlan_get_input(dev, key->vlan);
 	fdb_in = fdb_get(br, &fkey);
 
+	if (dev->redirect_dev) {
+		if (!fdb_in) {
+			fdb_in = fdb_create(br, &fkey, dev);
+			fdb_in->ndm_state = NUD_REACHABLE;
+		}
+
+		bridger_nl_fdb_refresh(fdb_in);
+	}
+
+	if (key->dest[0] & 1)
+		return;
+
 	memcpy(fkey.addr, key->dest, ETH_ALEN);
 	fdb_out = fdb_get(br, &fkey);
 
 	D("Pending flow on %s: %s -> %s @%d num_packets=%"PRIu64" -> %s\n",
-	  dev ? dev->ifname : "(unknown)",
+	  dev->ifname,
 	  strcpy(src, format_macaddr(key->src)),
 	  strcpy(dest, format_macaddr(key->dest)),
 	  key->vlan & BRIDGER_VLAN_ID, val->packets,
@@ -96,6 +109,10 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 
 	if (fdb_in->dev == fdb_out->dev &&
 	    !fdb_in->dev->hairpin_mode)
+		return;
+
+	if (dev->redirect_dev &&
+	    dev->redirect_dev != device_ifindex(fdb_out->dev))
 		return;
 
 	if (fdb_in->dev->isolated && fdb_out->dev->isolated)

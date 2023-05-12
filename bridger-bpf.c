@@ -29,6 +29,15 @@ struct {
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } offload_flows SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(pinning, 1);
+	__type(key, unsigned int);
+	__type(value, struct bridger_offload_flow);
+	__uint(max_entries, BRIDGER_DEVMAP_SIZE);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} dev_policy SEC(".maps");
+
 struct vlanhdr {
 	__be16 tci;
 	__be16 encap_proto;
@@ -60,17 +69,13 @@ skb_ptr(struct __sk_buff *skb, int offset, int len)
 }
 
 static __always_inline int
-bridger_offload(struct __sk_buff *skb, struct bridger_flow_key *key, unsigned long *flags)
+bridger_offload(struct __sk_buff *skb, struct bridger_offload_flow *offload,
+		struct bridger_flow_key *key, unsigned long *flags)
 {
-	struct bridger_offload_flow *offload;
 	struct vlanhdr *vlan;
 	struct ethhdr eth;
 	void *data;
 	u16 diff;
-
-	offload = bpf_map_lookup_elem(&offload_flows, key);
-	if (!offload)
-		return -1;
 
 	data = skb_ptr(skb, 0, sizeof(eth) + sizeof(*vlan));
 	if (!data)
@@ -129,19 +134,18 @@ bridger_key_set_vlan(struct bridger_flow_key *key, __be16 proto, u16 val)
 SEC("tc")
 int bridger_input(struct __sk_buff *skb)
 {
-	struct bridger_flow_key key = {};
+	struct bridger_offload_flow *offload, odata = {};
 	struct bridger_pending_flow pending;
+	struct bridger_flow_key key = {};
+	bool update_pending = false;
 	unsigned long flags = 0;
 	struct ethhdr *eth;
 	__be16 proto;
 	bool vlan_hdr = false;
-	int ret;
+	int ret = -1;
 
 	eth = skb_ptr(skb, 0, sizeof(*eth) + sizeof(struct vlanhdr));
 	if (!eth)
-		return TC_ACT_UNSPEC;
-
-	if ((eth->h_source[0] | eth->h_dest[0]) & 1)
 		return TC_ACT_UNSPEC;
 
 	memcpy(&key, eth, 2 * ETH_ALEN);
@@ -161,6 +165,9 @@ int bridger_input(struct __sk_buff *skb)
 	    proto == bpf_htons(ETH_P_ARP) || proto == bpf_htons(ETH_P_802_2))
 		return TC_ACT_UNSPEC;
 
+	if ((eth->h_source[0] | eth->h_dest[0]) & 1)
+		goto dev_lookup;
+
 	if (proto == bpf_htons(ETH_P_IPV6)) {
 		struct ipv6hdr *ip6hdr;
 		int ofs;
@@ -175,11 +182,24 @@ int bridger_input(struct __sk_buff *skb)
 	}
 
 
-	ret = bridger_offload(skb, &key, &flags);
+	offload = bpf_map_lookup_elem(&offload_flows, &key);
+	if (offload) {
+		ret = bridger_offload(skb, offload, &key, &flags);
+		goto out;
+	}
+
+dev_lookup:
+	offload = bpf_map_lookup_elem(&dev_policy, &key.ifindex);
+	if (offload) {
+		ret = bridger_offload(skb, offload, &key, &flags);
+		update_pending = true;
+	}
+
+out:
+	if (ret < 0 || update_pending)
+		bridger_update_pending_flow(skb, &key);
 	if (ret >= 0)
 		return bpf_redirect(ret, flags);
-
-	bridger_update_pending_flow(skb, &key);
 
 	return TC_ACT_UNSPEC;
 }

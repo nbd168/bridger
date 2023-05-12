@@ -14,6 +14,7 @@ static struct bpf_object *obj;
 static struct bpf_program *prog;
 static int map_pending = -1;
 static int map_offload = -1;
+static int map_policy = -1;
 static struct uloop_timeout poll_timer;
 int bridger_bpf_prog_fd = -1;
 
@@ -56,6 +57,25 @@ void bridger_bpf_flow_update(struct bridger_flow *flow)
 void bridger_bpf_flow_delete(struct bridger_flow *flow)
 {
 	bpf_map_delete_elem(map_offload, &flow->key);
+}
+
+void bridger_bpf_dev_policy_set(struct device *dev)
+{
+	struct bridger_offload_flow val = {};
+	unsigned int ifindex = device_ifindex(dev);
+	struct device *rdev = NULL;
+
+	if (dev->redirect_dev)
+		rdev = device_get(dev->redirect_dev);
+
+	if (!rdev) {
+		bpf_map_delete_elem(map_policy, &ifindex);
+		return;
+	}
+
+	val.vlan = device_vlan_get_output(rdev, dev->pvid);
+	val.target_port = device_ifindex(rdev);
+	bpf_map_update_elem(map_policy, &ifindex, &val, BPF_ANY);
 }
 
 static void bridger_bpf_poll_pending(struct uloop_timeout *timeout)
@@ -125,7 +145,8 @@ bridger_create_program(void)
 	}
 
 	if (!bridger_get_map_fd(&map_pending, "pending_flows") ||
-	    !bridger_get_map_fd(&map_offload, "offload_flows"))
+	    !bridger_get_map_fd(&map_offload, "offload_flows") ||
+	    !bridger_get_map_fd(&map_policy, "dev_policy"))
 		return -1;
 
 	bridger_bpf_prog_fd = bpf_program__fd(prog);

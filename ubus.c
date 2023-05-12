@@ -85,8 +85,49 @@ bridger_set_blacklist(struct ubus_context *ctx, struct ubus_object *obj,
 	return 0;
 }
 
+enum {
+	BRIDGER_DEVCFG_NAME,
+	BRIDGER_DEVCFG_REDIRECT,
+	__BRIDGER_DEVCFG_MAX,
+};
+
+static const struct blobmsg_policy devcfg_policy[__BRIDGER_DEVCFG_MAX] = {
+	[BRIDGER_DEVCFG_NAME] = { "name", BLOBMSG_TYPE_STRING },
+	[BRIDGER_DEVCFG_REDIRECT] = { "redirect", BLOBMSG_TYPE_STRING },
+};
+
+static int
+bridger_set_device_config(struct ubus_context *ctx, struct ubus_object *obj,
+			  struct ubus_request_data *req, const char *method,
+			  struct blob_attr *msg)
+{
+	struct blob_attr *tb[__BRIDGER_DEVCFG_MAX], *cur;
+	unsigned int redirect_dev = 0;
+	struct device *dev;
+
+
+	blobmsg_parse(devcfg_policy, __BRIDGER_DEVCFG_MAX, tb,
+		      blobmsg_data(msg), blobmsg_len(msg));
+
+	if ((cur = tb[BRIDGER_DEVCFG_NAME]) == NULL)
+		return UBUS_STATUS_INVALID_ARGUMENT;
+
+	if ((dev = device_get_by_name(blobmsg_get_string(cur))) == NULL)
+		return UBUS_STATUS_NOT_FOUND;
+
+	if ((cur = tb[BRIDGER_DEVCFG_REDIRECT]) != NULL &&
+	    !(redirect_dev = if_nametoindex(blobmsg_get_string(cur))))
+		return UBUS_STATUS_NOT_FOUND;
+
+	if (device_set_redirect(dev, redirect_dev))
+		return UBUS_STATUS_INVALID_ARGUMENT;
+
+	return 0;
+}
+
 static const struct ubus_method bridger_methods[] = {
-	UBUS_METHOD("set_blacklist", bridger_set_blacklist, blacklist_policy)
+	UBUS_METHOD("set_blacklist", bridger_set_blacklist, blacklist_policy),
+	UBUS_METHOD("set_device_config", bridger_set_device_config, devcfg_policy),
 };
 
 static struct ubus_object_type bridger_object_type =

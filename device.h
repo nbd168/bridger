@@ -31,6 +31,7 @@ struct device {
 
 	struct device *master;
 	struct device *offload_dev;
+	unsigned int redirect_dev;
 
 	struct list_head member_list;
 
@@ -96,7 +97,9 @@ device_match_phys_switch(struct device *dev1, struct device *dev2)
 extern struct avl_tree devices;
 enum device_type device_lookup_type(const char *type);
 struct device *device_get(int ifindex);
+struct device *device_get_by_name(const char *name);
 struct device *device_create(int ifindex, enum device_type type, const char *name);
+int device_set_redirect(struct device *dev, unsigned int ifindex);
 void device_set_bridge(struct device *dev, bool enabled);
 void device_vlan_add(struct device *dev, struct vlan *vlan);
 void device_vlan_remove(struct device *dev, int id);

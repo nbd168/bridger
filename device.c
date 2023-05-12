@@ -51,6 +51,35 @@ struct device *device_get(int ifindex)
 	return avl_find_element(&devices, (void *)(uintptr_t)ifindex, dev, node);
 }
 
+struct device *device_get_by_name(const char *name)
+{
+	unsigned int ifindex;
+
+	ifindex = if_nametoindex(name);
+	if (!ifindex)
+		return NULL;
+
+	return device_get(ifindex);
+}
+
+int device_set_redirect(struct device *dev, unsigned int ifindex)
+{
+	struct fdb_entry *f;
+
+	if (dev->redirect_dev == ifindex)
+		return 0;
+
+	dev->redirect_dev = ifindex;
+	if (!dev->attached)
+		return 0;
+
+	bridger_bpf_dev_policy_set(dev);
+	list_for_each_entry(f, &dev->fdb_entries, dev_list)
+		fdb_clear_flows(f);
+
+	return 0;
+}
+
 int device_vlan_get_input(struct device *dev, uint16_t bpf_vlan)
 {
 	struct bridge *br = device_get_br(dev);
@@ -96,6 +125,24 @@ uint16_t device_vlan_get_output(struct device *dev, int vid)
 	}
 
 	return 0;
+}
+
+static void
+device_set_attached(struct device *dev, bool val)
+{
+	if (dev->attached == val)
+		return;
+
+	D("%s device %s\n", val ? "attach" : "detach", dev->ifname);
+	dev->attached = val;
+
+	if (val) {
+		bridger_nl_device_attach(dev);
+		bridger_bpf_dev_policy_set(dev);
+	} else {
+		device_set_redirect(dev, 0);
+		bridger_nl_device_detach(dev);
+	}
 }
 
 struct device *device_create(int ifindex, enum device_type type, const char *name)
@@ -149,10 +196,9 @@ void device_free(struct device *dev)
 
 	avl_delete(&devices, &dev->node);
 	device_clear_flows(dev);
-	if (dev->master) {
-		bridger_nl_device_detach(dev);
+	device_set_attached(dev, false);
+	if (dev->master)
 		list_del(&dev->member_list);
-	}
 	free(dev->vlan);
 	free(dev);
 }
@@ -220,14 +266,7 @@ static void __device_update(struct device *dev)
 	dev->master = master;
 
 	attach = (dev->master || dev->br) && !bridger_ubus_dev_blacklisted(dev);
-	if (attach != dev->attached) {
-		D("%s device %s\n", attach ? "attach" : "detach", dev->ifname);
-		if (attach)
-			bridger_nl_device_attach(dev);
-		else
-			bridger_nl_device_detach(dev);
-		dev->attached = attach;
-	}
+	device_set_attached(dev, attach);
 
 	odev = device_get_offload_dev(dev);
 	if (odev != dev->offload_dev)
