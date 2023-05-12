@@ -15,7 +15,7 @@
 #include <linux/tc_act/tc_mirred.h>
 #include "bridger.h"
 
-static struct nl_sock *event_sock;
+static struct nl_sock *event_sock, *cmd_sock;
 static struct uloop_fd event_fd;
 static struct uloop_timeout refresh_linkinfo;
 static bool ignore_errors;
@@ -326,6 +326,22 @@ check_action:
 }
 
 static int
+bridger_nl_cmd_cb(struct nl_msg *msg, void *arg)
+{
+	struct nlmsghdr *nh = nlmsg_hdr(msg);
+
+	switch (nh->nlmsg_type) {
+	case RTM_NEWTFILTER:
+		handle_filter(nh);
+		break;
+	default:
+		break;
+	}
+
+	return NL_SKIP;
+}
+
+static int
 bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 {
 	struct nlmsghdr *nh = nlmsg_hdr(msg);
@@ -348,9 +364,6 @@ bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 		break;
 	case RTM_DELVLAN:
 		handle_vlan(nh, false);
-		break;
-	case RTM_NEWTFILTER:
-		handle_filter(nh);
 		break;
 	default:
 		break;
@@ -405,10 +418,10 @@ bridger_nl_del_filter(struct device *dev, unsigned int prio)
 
 	msg = nlmsg_alloc_simple(RTM_DELTFILTER, NLM_F_REQUEST);
 	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
-	nl_send_auto_complete(event_sock, msg);
+	nl_send_auto_complete(cmd_sock, msg);
 	nlmsg_free(msg);
 	ignore_errors = true;
-	nl_wait_for_ack(event_sock);
+	nl_wait_for_ack(cmd_sock);
 	ignore_errors = false;
 }
 
@@ -451,10 +464,10 @@ bridger_nl_device_prepare(struct device *dev)
 	msg = nlmsg_alloc_simple(RTM_NEWQDISC, NLM_F_CREATE | NLM_F_EXCL);
 	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
 	nla_put_string(msg, TCA_KIND, "clsact");
-	nl_send_auto_complete(event_sock, msg);
+	nl_send_auto_complete(cmd_sock, msg);
 	nlmsg_free(msg);
 	ignore_errors = true;
-	nl_wait_for_ack(event_sock);
+	nl_wait_for_ack(cmd_sock);
 	ignore_errors = false;
 }
 
@@ -604,10 +617,10 @@ __bridger_nl_flow_offload_add(struct bridger_flow *flow, struct device *dev)
 
 	nla_nest_end(msg, opts);
 
-	nl_send_auto_complete(event_sock, msg);
+	nl_send_auto_complete(cmd_sock, msg);
 	nlmsg_free(msg);
 
-	return nl_wait_for_ack(event_sock);
+	return nl_wait_for_ack(cmd_sock);
 }
 
 int bridger_nl_flow_offload_add(struct bridger_flow *flow)
@@ -660,9 +673,9 @@ void bridger_nl_flow_offload_update(struct bridger_flow *flow)
 	dev->offload_update = false;
 	msg = nlmsg_alloc_simple(RTM_GETTFILTER, NLM_F_REQUEST | NLM_F_DUMP);
 	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
-	nl_send_auto_complete(event_sock, msg);
+	nl_send_auto_complete(cmd_sock, msg);
 	nlmsg_free(msg);
-	nl_wait_for_ack(event_sock);
+	nl_wait_for_ack(cmd_sock);
 }
 
 void bridger_nl_flow_offload_del(struct bridger_flow *flow)
@@ -677,11 +690,11 @@ void bridger_nl_flow_offload_del(struct bridger_flow *flow)
 	avl_delete(&offload_flows, &flow->offload_node);
 	flow->offload_ifindex = 0;
 	msg = bridger_nl_flow_offload_msg(flow, ifindex, RTM_DELTFILTER);
-	nl_send_auto_complete(event_sock, msg);
+	nl_send_auto_complete(cmd_sock, msg);
 	nlmsg_free(msg);
 
 	ignore_errors = true;
-	nl_wait_for_ack(event_sock);
+	nl_wait_for_ack(cmd_sock);
 	ignore_errors = false;
 }
 
@@ -725,12 +738,12 @@ int bridger_nl_fdb_refresh(struct fdb_entry *f)
 	if (f->key.vlan)
 		nla_put_u16(msg, NDA_VLAN, f->key.vlan);
 	nla_put(msg, NDA_LLADDR, ETH_ALEN, f->key.addr);
-	nl_send_auto_complete(event_sock, msg);
+	nl_send_auto_complete(cmd_sock, msg);
 	nlmsg_free(msg);
 
 	f->updated = true;
 
-	ret = nl_wait_for_ack(event_sock);
+	ret = nl_wait_for_ack(cmd_sock);
 	if (ret)
 		D("Failed to refresh fdb entry %s vid=%d @%s ret=%d\n",
 		  format_macaddr(f->key.addr), f->key.vlan, f->dev->ifname, ret);
@@ -770,25 +783,57 @@ bridge_nl_error_cb(struct sockaddr_nl *nla, struct nlmsgerr *err,
 	return NL_STOP;
 }
 
+struct nl_sock *
+bridger_open_rtnl_socket(void)
+{
+	struct nl_sock *sock;
+	int opt, fd;
+
+	sock = nl_socket_alloc();
+	if (!sock)
+		return NULL;
+
+	if (nl_connect(sock, NETLINK_ROUTE)) {
+		nl_socket_free(sock);
+		return NULL;
+	}
+
+	nl_socket_set_buffer_size(sock, 65536, 0);
+	nl_cb_err(nl_socket_get_cb(sock), NL_CB_CUSTOM,
+		  bridge_nl_error_cb, NULL);
+
+	fd = nl_socket_get_fd(sock);
+	opt = 1;
+	setsockopt(fd, SOL_NETLINK, NETLINK_EXT_ACK, &opt, sizeof(opt));
+
+	opt = 1;
+	setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &opt, sizeof(opt));
+
+	return sock;
+}
+
+
 int bridger_nl_init(void)
 {
 	static struct rtgenmsg llmsg = { .rtgen_family = AF_UNSPEC };
 	static struct ndmsg ndmsg = { .ndm_family = PF_BRIDGE };
 	static struct br_vlan_msg bvmsg = { .family = PF_BRIDGE };
 	struct nl_msg *msg;
-	int opt;
 
 	refresh_linkinfo.cb = bridger_refresh_linkinfo_cb;
 
-	event_sock = nl_socket_alloc();
+	cmd_sock = bridger_open_rtnl_socket();
+	if (!cmd_sock)
+		return -1;
+
+	nl_socket_modify_cb(cmd_sock, NL_CB_VALID, NL_CB_CUSTOM,
+			    bridger_nl_cmd_cb, NULL);
+
+	event_sock = bridger_open_rtnl_socket();
 	if (!event_sock)
 		return -1;
 
-	if (nl_connect(event_sock, NETLINK_ROUTE))
-		return -1;
-
 	nl_socket_disable_seq_check(event_sock);
-	nl_socket_set_buffer_size(event_sock, 65536, 0);
 	nl_socket_modify_cb(event_sock, NL_CB_VALID, NL_CB_CUSTOM,
 			    bridger_nl_event_cb, NULL);
 	nl_cb_err(nl_socket_get_cb(event_sock), NL_CB_CUSTOM,
@@ -800,14 +845,6 @@ int bridger_nl_init(void)
 	event_fd.fd = nl_socket_get_fd(event_sock);
 	event_fd.cb = bridger_nl_sock_cb;
 	uloop_fd_add(&event_fd, ULOOP_READ);
-
-	opt = 1;
-	setsockopt(event_fd.fd, SOL_NETLINK,
-		   NETLINK_EXT_ACK, &opt, sizeof(opt));
-
-	opt = 1;
-	setsockopt(event_fd.fd, SOL_NETLINK,
-		   NETLINK_CAP_ACK, &opt, sizeof(opt));
 
 	nl_send_simple(event_sock, RTM_GETLINK, NLM_F_DUMP | NLM_F_REQUEST, &llmsg, sizeof(llmsg));
 	nl_wait_for_ack(event_sock);
