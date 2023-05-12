@@ -14,6 +14,7 @@ struct bridger_flow {
 
 	uint64_t avg_packets;
 	uint64_t cur_packets;
+	uint64_t offload_packets;
 	int idle;
 
 	uint16_t offload_ifindex;

@@ -11,6 +11,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/if_bridge.h>
 #include <linux/pkt_cls.h>
+#include <linux/gen_stats.h>
 #include <linux/tc_act/tc_vlan.h>
 #include <linux/tc_act/tc_mirred.h>
 #include "bridger.h"
@@ -271,6 +272,7 @@ handle_filter(struct nlmsghdr *nh)
 	struct nlattr *tbf[__TCA_FLOWER_MAX];
 	struct nlattr *tba[__TCA_ACT_MAX];
 	struct nlattr *tbm[__TCA_MIRRED_MAX];
+	struct nlattr *tbs[__TCA_STATS_MAX];
 	struct nlattr *cur;
 	struct bridger_flow *flow;
 	const struct tcf_t *tm;
@@ -323,6 +325,22 @@ check_action:
 	idle = tm->lastuse / hz;
 	if (idle < flow->idle)
 		flow->idle = idle;
+
+	if (tba[TCA_ACT_STATS]) {
+		uint64_t packets;
+
+		nla_parse_nested(tbs, TCA_STATS_MAX, tba[TCA_ACT_STATS], NULL);
+
+		if (tbs[TCA_STATS_PKT64])
+			packets = nla_get_u64(tbs[TCA_STATS_PKT64]);
+		else if (tbs[TCA_STATS_BASIC])
+			packets = ((struct gnet_stats_basic *)nla_data(tbs[TCA_STATS_BASIC]))->packets;
+		else
+			return;
+
+		flow->cur_packets += packets - flow->offload_packets;
+		flow->offload_packets = packets;
+	}
 }
 
 static int
@@ -696,6 +714,8 @@ void bridger_nl_flow_offload_del(struct bridger_flow *flow)
 	ignore_errors = true;
 	nl_wait_for_ack(cmd_sock);
 	ignore_errors = false;
+
+	flow->offload_packets = 0;
 }
 
 int bridger_nl_device_attach(struct device *dev)
