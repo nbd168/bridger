@@ -12,6 +12,10 @@
 #include <bpf/bpf_endian.h>
 #include "bridger-bpf.h"
 
+#ifndef ETH_P_CFM
+#define ETH_P_CFM	0x8902
+#endif
+
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(pinning, 1);
