@@ -18,7 +18,6 @@
 
 static struct nl_sock *event_sock, *cmd_sock;
 static struct uloop_fd event_fd;
-static struct uloop_timeout refresh_linkinfo;
 static bool ignore_errors;
 
 static int offload_handle_cmp(const void *k1, const void *k2, void *ptr)
@@ -32,16 +31,79 @@ static int offload_handle_cmp(const void *k1, const void *k2, void *ptr)
 static AVL_TREE(offload_flows, offload_handle_cmp, false, NULL);
 
 static void
+newlink_add_vlan(struct device *dev, const struct bridge_vlan_info *vinfo,
+		 uint16_t vid)
+{
+	struct vlan *v;
+
+	v = &dev->vlan[dev->n_vlans++];
+	v->id = vid;
+	v->untagged = !!(vinfo->flags & BRIDGE_VLAN_INFO_UNTAGGED);
+	v->pvid = !!(vinfo->flags & BRIDGE_VLAN_INFO_PVID);
+	if (v->pvid)
+		dev->pvid = vid;
+
+	D("Add vlan %s%s%d to device %s\n",
+	  v->untagged ? "untaggged " : "",
+	  v->pvid ? "pvid " : "",
+	  v->id, dev->ifname);
+}
+
+
+static void
 handle_newlink_brvlan(struct device *dev, struct nlattr *info)
 {
 	struct nlattr *tb[__IFLA_BRIDGE_VLAN_TUNNEL_MAX];
+	const struct bridge_vlan_info *vinfo;
 	struct nlattr *cur;
+	uint16_t vid_start = 0;
 	int start = 0, end = 0;
+	int n_vlan = 0;
 	int rem;
 	int i;
 
-	for (i = 0; i < dev->n_vlans; i++)
-		dev->vlan[i].tunnel = 0;
+	D("Update vlans on device %s\n", dev->ifname);
+
+	nla_for_each_nested(cur, info, rem) {
+		if (nla_type(cur) != IFLA_BRIDGE_VLAN_INFO)
+			continue;
+
+		vinfo = nla_data(cur);
+		if (vinfo->flags & BRIDGE_VLAN_INFO_RANGE_BEGIN) {
+			vid_start = vinfo->vid;
+			continue;
+		}
+
+		if (vinfo->flags & BRIDGE_VLAN_INFO_RANGE_END) {
+			n_vlan += vinfo->vid - vid_start + 1;
+			continue;
+		}
+
+		n_vlan++;
+	}
+
+	dev->vlan = calloc(n_vlan, sizeof(*dev->vlan));
+	dev->n_vlans = 0;
+
+	nla_for_each_nested(cur, info, rem) {
+		if (nla_type(cur) != IFLA_BRIDGE_VLAN_INFO)
+			continue;
+
+		vinfo = nla_data(cur);
+		if (vinfo->flags & BRIDGE_VLAN_INFO_RANGE_BEGIN) {
+			vid_start = vinfo->vid;
+			continue;
+		}
+
+		if (vinfo->flags & BRIDGE_VLAN_INFO_RANGE_END) {
+			while (vid_start <= vinfo->vid)
+				newlink_add_vlan(dev, vinfo, vid_start++);
+			continue;
+		}
+
+		newlink_add_vlan(dev, vinfo, vinfo->vid);
+	}
+
 
 	nla_for_each_nested(cur, info, rem) {
 		uint16_t flags;
@@ -108,7 +170,13 @@ handle_newlink(struct nlmsghdr *nh)
 	if (tbi[IFLA_INFO_KIND])
 		type = device_lookup_type(nla_data(tbi[IFLA_INFO_KIND]));
 
-	dev = device_create(ifi->ifi_index, type, nla_data(tb[IFLA_IFNAME]));
+	if (ifi->ifi_family == AF_UNSPEC || tbi[IFLA_INFO_KIND]) {
+		dev = device_create(ifi->ifi_index, type, nla_data(tb[IFLA_IFNAME]));
+	} else {
+		dev = device_get(ifi->ifi_index);
+		if (!dev)
+			return;
+	}
 
 	if ((cur = tb[IFLA_ADDRESS]) != NULL &&
 	    nla_len(cur) == ETH_ALEN)
@@ -232,39 +300,6 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 }
 
 static void
-handle_vlan(struct nlmsghdr *nh, bool add)
-{
-	struct br_vlan_msg *bvm = NLMSG_DATA(nh);
-	struct nlattr *tb[__BRIDGE_VLANDB_MAX];
-	struct nlattr *tbe[__BRIDGE_VLANDB_ENTRY_MAX];
-	struct bridge_vlan_info *vinfo;
-	struct vlan vlan = {};
-	struct device *dev;
-
-	if (bvm->family != AF_BRIDGE)
-		return;
-
-	dev = device_get(bvm->ifindex);
-	if (!dev)
-		return;
-
-	nlmsg_parse(nh, sizeof(struct br_vlan_msg), tb, BRIDGE_VLANDB_MAX, NULL);
-	if (!tb[BRIDGE_VLANDB_ENTRY])
-		return;
-
-	nla_parse_nested(tbe, BRIDGE_VLANDB_ENTRY_MAX, tb[BRIDGE_VLANDB_ENTRY], NULL);
-	if (!tbe[BRIDGE_VLANDB_ENTRY_INFO])
-		return;
-
-	vinfo = nla_data(tbe[BRIDGE_VLANDB_ENTRY_INFO]);
-	vlan.id = vinfo->vid;
-	vlan.untagged = !!(vinfo->flags & BRIDGE_VLAN_INFO_UNTAGGED);
-	vlan.pvid = !!(vinfo->flags & BRIDGE_VLAN_INFO_PVID);
-	device_vlan_add(dev, &vlan);
-	uloop_timeout_set(&refresh_linkinfo, 10);
-}
-
-static void
 handle_filter(struct nlmsghdr *nh)
 {
 	struct tcmsg *t = NLMSG_DATA(nh);
@@ -377,12 +412,6 @@ bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 	case RTM_DELNEIGH:
 		handle_neigh(nh, false);
 		break;
-	case RTM_NEWVLAN:
-		handle_vlan(nh, true);
-		break;
-	case RTM_DELVLAN:
-		handle_vlan(nh, false);
-		break;
 	default:
 		break;
 	}
@@ -396,15 +425,16 @@ bridger_nl_sock_cb(struct uloop_fd *fd, unsigned int events)
 	nl_recvmsgs_default(event_sock);
 }
 
-static void bridger_refresh_linkinfo_cb(struct uloop_timeout *timeout)
+static void bridger_refresh_linkinfo(void)
 {
-	static struct rtgenmsg llmsg = { .rtgen_family = PF_BRIDGE };
+	static struct ifinfomsg llmsg = { .ifi_family = PF_BRIDGE };
 	struct nl_msg *msg;
 
 	msg = nlmsg_alloc_simple(RTM_GETLINK, NLM_F_REQUEST | NLM_F_DUMP);
-	nlmsg_append(msg, &llmsg, sizeof(llmsg), NLMSG_ALIGNTO);
-	nla_put_u32(msg, IFLA_EXT_MASK, RTEXT_FILTER_BRVLAN_COMPRESSED);
+	nlmsg_append(msg, &llmsg, sizeof(llmsg), 0);
+	nla_put_u32(msg, IFLA_EXT_MASK, RTEXT_FILTER_BRVLAN);
 	nl_send_auto_complete(event_sock, msg);
+	nl_wait_for_ack(event_sock);
 }
 
 static int bridger_nl_set_bpf_prog(int ifindex, int fd, bool ingress)
@@ -835,12 +865,10 @@ bridger_open_rtnl_socket(void)
 
 int bridger_nl_init(void)
 {
-	static struct rtgenmsg llmsg = { .rtgen_family = AF_UNSPEC };
+	static struct ifinfomsg llmsg = { .ifi_family = AF_UNSPEC };
 	static struct ndmsg ndmsg = { .ndm_family = PF_BRIDGE };
 	static struct br_vlan_msg bvmsg = { .family = PF_BRIDGE };
 	struct nl_msg *msg;
-
-	refresh_linkinfo.cb = bridger_refresh_linkinfo_cb;
 
 	cmd_sock = bridger_open_rtnl_socket();
 	if (!cmd_sock)
@@ -860,7 +888,6 @@ int bridger_nl_init(void)
 		  bridge_nl_error_cb, NULL);
 	nl_socket_add_membership(event_sock, RTNLGRP_LINK);
 	nl_socket_add_membership(event_sock, RTNLGRP_NEIGH);
-	nl_socket_add_membership(event_sock, RTNLGRP_BRVLAN);
 
 	event_fd.fd = nl_socket_get_fd(event_sock);
 	event_fd.cb = bridger_nl_sock_cb;
@@ -875,6 +902,8 @@ int bridger_nl_init(void)
 	nl_send_auto_complete(event_sock, msg);
 	nlmsg_free(msg);
 	nl_wait_for_ack(event_sock);
+
+	bridger_refresh_linkinfo();
 
 	nl_send_simple(event_sock, RTM_GETNEIGH, NLM_F_DUMP | NLM_F_REQUEST, &ndmsg, sizeof(ndmsg));
 	nl_wait_for_ack(event_sock);
