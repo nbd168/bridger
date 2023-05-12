@@ -4,6 +4,7 @@
  */
 #define _GNU_SOURCE
 #include <sys/socket.h>
+#include <sys/utsname.h>
 #include <netinet/if_ether.h>
 #include <netlink/msg.h>
 #include <netlink/attr.h>
@@ -14,10 +15,12 @@
 #include <linux/gen_stats.h>
 #include <linux/tc_act/tc_vlan.h>
 #include <linux/tc_act/tc_mirred.h>
+#include <errno.h>
 #include "bridger.h"
 
 static struct nl_sock *event_sock, *cmd_sock;
 static struct uloop_fd event_fd;
+static bool has_flow_offload;
 static bool ignore_errors;
 
 static int offload_handle_cmp(const void *k1, const void *k2, void *ptr)
@@ -677,6 +680,9 @@ int bridger_nl_flow_offload_add(struct bridger_flow *flow)
 	int ifindex;
 	int ret = -1;
 
+	if (!has_flow_offload)
+		return -EOPNOTSUPP;
+
 	if (flow->offload_ifindex)
 		bridger_nl_flow_offload_del(flow);
 
@@ -708,6 +714,9 @@ void bridger_nl_flow_offload_update(struct bridger_flow *flow)
 	struct nl_msg *msg;
 	struct device *dev;
 
+	if (!has_flow_offload)
+		return;
+
 	if (!flow->offload_ifindex)
 		return;
 
@@ -730,6 +739,9 @@ void bridger_nl_flow_offload_del(struct bridger_flow *flow)
 {
 	struct nl_msg *msg;
 	int ifindex;
+
+	if (!has_flow_offload)
+		return;
 
 	ifindex = flow->offload_ifindex;
 	if (!ifindex)
@@ -862,6 +874,24 @@ bridger_open_rtnl_socket(void)
 	return sock;
 }
 
+static bool bridger_has_flow_offload(void)
+{
+	struct utsname uts;
+	char *sep;
+
+	if (uname(&uts))
+		return true;
+
+	sep = strchr(uts.release, '.');
+	if (!sep)
+		return true;
+
+	*sep = 0;
+	if (atoi(uts.release) < 5)
+		return false;
+
+	return true;
+}
 
 int bridger_nl_init(void)
 {
@@ -869,6 +899,8 @@ int bridger_nl_init(void)
 	static struct ndmsg ndmsg = { .ndm_family = PF_BRIDGE };
 	static struct br_vlan_msg bvmsg = { .family = PF_BRIDGE };
 	struct nl_msg *msg;
+
+	has_flow_offload = bridger_has_flow_offload();
 
 	cmd_sock = bridger_open_rtnl_socket();
 	if (!cmd_sock)
