@@ -7,8 +7,8 @@
 
 int bridger_nl_init(void);
 
-int bridger_nl_device_attach(struct device *dev);
-void bridger_nl_device_detach(struct device *dev);
+int bridger_nl_device_attach(struct device *dev, bool tx);
+void bridger_nl_device_detach(struct device *dev, bool tx);
 
 int bridger_nl_flow_offload_add(struct bridger_flow *flow);
 void bridger_nl_flow_offload_update(struct bridger_flow *flow);

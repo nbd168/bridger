@@ -11,12 +11,13 @@
 #include "bridger.h"
 
 static struct bpf_object *obj;
-static struct bpf_program *prog;
+static struct bpf_program *prog, *tx_prog;
 static int map_pending = -1;
 static int map_offload = -1;
 static int map_policy = -1;
 static struct uloop_timeout poll_timer;
 int bridger_bpf_prog_fd = -1;
+int bridger_bpf_tx_prog_fd = -1;
 
 static int bridger_bpf_pr(enum libbpf_print_level level, const char *format,
 		     va_list args)
@@ -61,7 +62,7 @@ void bridger_bpf_flow_delete(struct bridger_flow *flow)
 
 void bridger_bpf_dev_policy_set(struct device *dev)
 {
-	struct bridger_offload_flow val = {};
+	struct bridger_policy_flow val = {};
 	unsigned int ifindex = device_ifindex(dev);
 	struct device *rdev = NULL;
 
@@ -73,8 +74,10 @@ void bridger_bpf_dev_policy_set(struct device *dev)
 		return;
 	}
 
-	val.vlan = device_vlan_get_output(rdev, dev->pvid);
-	val.target_port = device_ifindex(rdev);
+	val.flow.vlan = device_vlan_get_output(rdev, dev->pvid);
+	val.flow.target_port = device_ifindex(rdev);
+	if (dev->master)
+		memcpy(val.bridge_mac, dev->master->addr, ETH_ALEN);
 	bpf_map_update_elem(map_policy, &ifindex, &val, BPF_ANY);
 }
 
@@ -122,11 +125,13 @@ bridger_create_program(void)
 	}
 
 	prog = bpf_object__find_program_by_name(obj, "bridger_input");
-	if (!prog) {
+	tx_prog = bpf_object__find_program_by_name(obj, "bridger_output");
+	if (!prog || !tx_prog) {
 		D("Can't find classifier prog\n");
 		return -1;
 	}
 
+	bpf_program__set_type(tx_prog, BPF_PROG_TYPE_SCHED_CLS);
 	bpf_program__set_type(prog, BPF_PROG_TYPE_SCHED_CLS);
 
 	err = bpf_object__load(obj);
@@ -150,6 +155,7 @@ bridger_create_program(void)
 		return -1;
 
 	bridger_bpf_prog_fd = bpf_program__fd(prog);
+	bridger_bpf_tx_prog_fd = bpf_program__fd(tx_prog);
 
 	return 0;
 }

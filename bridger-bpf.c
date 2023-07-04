@@ -37,7 +37,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(pinning, 1);
 	__type(key, unsigned int);
-	__type(value, struct bridger_offload_flow);
+	__type(value, struct bridger_policy_flow);
 	__uint(max_entries, BRIDGER_DEVMAP_SIZE);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } dev_policy SEC(".maps");
@@ -58,6 +58,11 @@ static __always_inline int proto_is_vlan(__u16 h_proto)
 static __always_inline void *__skb_data(struct __sk_buff *skb)
 {
 	return (void *)(long)skb->data;
+}
+
+static int ether_addr_cmp(const void *a1, const void *a2)
+{
+	return (*(__u32 *)a1 ^ *(__u32 *)a2) | (*(__u16 *)(a1 + 4) ^ *(__u16 *)(a2 + 4));
 }
 
 static __always_inline void *
@@ -133,6 +138,30 @@ bridger_key_set_vlan(struct bridger_flow_key *key, __be16 proto, u16 val)
 	key->vlan |= val & BRIDGER_VLAN_ID;
 	if (proto == bpf_htons(ETH_P_8021AD))
 		key->vlan |= BRIDGER_VLAN_TYPE_AD;
+}
+
+SEC("tc")
+int bridger_output(struct __sk_buff *skb)
+{
+	struct bridger_policy_flow *offload;
+	struct ethhdr *eth;
+	u32 ifindex = skb->ifindex;
+
+	eth = skb_ptr(skb, 0, sizeof(*eth) + sizeof(struct vlanhdr));
+	if (!eth)
+		return TC_ACT_UNSPEC;
+
+	offload = bpf_map_lookup_elem(&dev_policy, &ifindex);
+	if (!offload)
+		return TC_ACT_UNSPEC;
+
+	if (skb->ingress_ifindex == offload->flow.target_port)
+		return TC_ACT_UNSPEC;
+
+	if (!ether_addr_cmp(eth->h_source, offload->bridge_mac))
+		return TC_ACT_UNSPEC;
+
+	return TC_ACT_SHOT;
 }
 
 SEC("tc")

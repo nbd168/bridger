@@ -457,10 +457,11 @@ static int bridger_nl_set_bpf_prog(int ifindex, int fd, bool ingress)
 }
 
 static void
-bridger_nl_del_filter(struct device *dev, unsigned int prio)
+bridger_nl_del_filter(struct device *dev, unsigned int prio, bool ingress)
 {
 	struct tcmsg tcmsg = {
-		.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS),
+		.tcm_parent = TC_H_MAKE(TC_H_CLSACT, ingress ? TC_H_MIN_INGRESS :
+						     TC_H_MIN_EGRESS),
 		.tcm_family = AF_UNSPEC,
 		.tcm_ifindex = device_ifindex(dev),
 		.tcm_info = TC_H_MAKE(prio << 16, 0),
@@ -482,12 +483,15 @@ bridger_nl_device_clear_offload(struct device *dev)
 	int i;
 
 	for (i = BRIDGER_PRIO_OFFLOAD_START; i <= BRIDGER_PRIO_OFFLOAD_END; i++)
-		bridger_nl_del_filter(dev, i);
+		bridger_nl_del_filter(dev, i, true);
 }
 
 static void
 bridger_nl_device_cleanup(struct device *dev)
 {
+	bridger_nl_device_clear_offload(dev);
+	dev->cleanup = false;
+
 	while ((dev = dev->offload_dev) != NULL) {
 		if (!dev->cleanup)
 			continue;
@@ -760,25 +764,27 @@ void bridger_nl_flow_offload_del(struct bridger_flow *flow)
 	flow->offload_packets = 0;
 }
 
-int bridger_nl_device_attach(struct device *dev)
+int bridger_nl_device_attach(struct device *dev, bool tx)
 {
+	int fd = tx ? bridger_bpf_tx_prog_fd : bridger_bpf_prog_fd;
 	int ret;
 
-	bridger_nl_device_detach(dev);
-	bridger_nl_device_cleanup(dev);
+	bridger_nl_device_detach(dev, tx);
 
-	ret = bridger_nl_set_bpf_prog(device_ifindex(dev), bridger_bpf_prog_fd, !dev->br);
+	ret = bridger_nl_set_bpf_prog(device_ifindex(dev), fd, !tx && !dev->br);
 	if (ret)
 		return ret;
 
 	return 0;
 }
 
-void bridger_nl_device_detach(struct device *dev)
+void bridger_nl_device_detach(struct device *dev, bool tx)
 {
-	dev->cleanup = false;
-	bridger_nl_del_filter(dev, BRIDGER_PRIO_BPF);
-	bridger_nl_device_clear_offload(dev);
+	bridger_nl_del_filter(dev, BRIDGER_PRIO_BPF, !tx && !dev->br);
+	if (tx)
+		return;
+
+	bridger_nl_device_cleanup(dev);
 }
 
 int bridger_nl_fdb_refresh(struct fdb_entry *f)

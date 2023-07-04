@@ -34,4 +34,9 @@ struct bridger_offload_flow {
 	uint16_t redirect_flags;
 };
 
+struct bridger_policy_flow {
+	struct bridger_offload_flow flow;
+	uint8_t bridge_mac[6];
+};
+
 #endif

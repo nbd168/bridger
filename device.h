@@ -23,6 +23,7 @@ struct device {
 
 	bool has_clsact;
 	bool attached;
+	bool tx_attached;
 	bool update;
 	bool cleanup;
 	bool hairpin_mode;

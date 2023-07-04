@@ -6,6 +6,7 @@
 #define __BRIDGER_BPF_H
 
 extern int bridger_bpf_prog_fd;
+extern int bridger_bpf_tx_prog_fd;
 
 int bridger_bpf_init(void);
 void bridger_bpf_dev_policy_set(struct device *dev);
