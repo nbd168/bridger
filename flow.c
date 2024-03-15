@@ -160,7 +160,6 @@ bridger_flow_update_cb(struct uloop_timeout *timeout)
 	avl_for_each_element_safe(&flows, flow, node, tmp) {
 		avl_delete(&sorted_flows, &flow->sort_node);
 		bridger_bpf_flow_update(flow);
-		bridger_nl_flow_offload_update(flow);
 		avl_insert(&sorted_flows, &flow->sort_node);
 
 		flow_debug_msg(flow, "Update");
