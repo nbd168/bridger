@@ -12,6 +12,7 @@
 
 static struct ubus_auto_conn conn;
 static KVLIST(blacklist, kvlist_blob_len);
+static bool bridge_local = false;
 
 bool bridger_ubus_dev_blacklisted(struct device *dev)
 {
@@ -26,6 +27,8 @@ bool bridger_ubus_dev_blacklisted(struct device *dev)
 			if (dev->master &&
 			    !fnmatch(blobmsg_get_string(cur), dev->master->ifname, 0))
 				return true;
+			if (!bridge_local && dev->br)
+				return true;
 		}
 
 	return false;
@@ -37,7 +40,7 @@ static void bridger_blacklist_update(void)
 
 	avl_for_each_element(&devices, dev, node) {
 		if (dev->attached ==
-		    (dev->master && !bridger_ubus_dev_blacklisted(dev)))
+		    ((dev->master || dev->br) && !bridger_ubus_dev_blacklisted(dev)))
 			continue;
 
 		device_update(dev);
@@ -125,7 +128,56 @@ bridger_set_device_config(struct ubus_context *ctx, struct ubus_object *obj,
 	return 0;
 }
 
+enum {
+	BRIDGER_CONFIG_LOCAL,
+	BRIDGER_CONFIG_BLACKLIST,
+	__BRIDGER_CONFIG_MAX
+};
+
+static const struct blobmsg_policy config_policy[__BRIDGER_CONFIG_MAX] = {
+	[BRIDGER_CONFIG_LOCAL] = { "bridge_local", BLOBMSG_TYPE_BOOL },
+	[BRIDGER_CONFIG_BLACKLIST] = { "blacklist", BLOBMSG_TYPE_ARRAY },
+};
+
+static int
+bridger_set_config(struct ubus_context *ctx, struct ubus_object *obj,
+		   struct ubus_request_data *req, const char *method,
+		   struct blob_attr *msg)
+{
+	struct blob_attr *tb[__BRIDGER_CONFIG_MAX];
+	struct blob_attr *cur;
+	bool changed = true;
+	bool local;
+
+	blobmsg_parse(config_policy, __BRIDGER_CONFIG_MAX, tb,
+		      blobmsg_data(msg), blobmsg_len(msg));
+
+	cur = tb[BRIDGER_CONFIG_BLACKLIST];
+	changed = !blob_attr_equal(kvlist_get(&blacklist, "config"), cur);
+	if (cur != NULL) {
+		if (blobmsg_check_array(cur, BLOBMSG_TYPE_STRING) < 0)
+			return UBUS_STATUS_INVALID_ARGUMENT;
+		kvlist_set(&blacklist, "config", cur);
+	} else {
+		kvlist_delete(&blacklist, "config");
+	}
+
+	cur = tb[BRIDGER_CONFIG_LOCAL];
+	local = cur && blobmsg_get_bool(cur);
+	if (bridge_local != local) {
+		bridge_local = local;
+		changed = true;
+	}
+
+	if (changed)
+		bridger_blacklist_update();
+
+	return 0;
+}
+
+
 static const struct ubus_method bridger_methods[] = {
+	UBUS_METHOD("set_config", bridger_set_config, config_policy),
 	UBUS_METHOD("set_blacklist", bridger_set_blacklist, blacklist_policy),
 	UBUS_METHOD("set_device_config", bridger_set_device_config, devcfg_policy),
 };
