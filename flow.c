@@ -143,7 +143,8 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	flow->offload.redirect_flags = fdb_out->dev->br ? BPF_F_INGRESS : 0;
 
 	bridger_bpf_flow_upload(flow);
-	bridger_nl_flow_offload_add(flow);
+	if (!fdb_in->dev->br && !fdb_out->dev->br)
+		bridger_nl_flow_offload_add(flow);
 
 	avl_insert(&sorted_flows, &flow->sort_node);
 }
