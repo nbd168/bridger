@@ -104,6 +104,9 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (!fdb_in || !fdb_out)
 		return;
 
+	if (!bridge_local_rx && fdb_out->dev->br)
+		return;
+
 	if (device_match_phys_switch(fdb_in->dev, fdb_out->dev))
 		return;
 

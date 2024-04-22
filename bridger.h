@@ -51,6 +51,7 @@
 
 
 extern int debug_level;
+extern bool bridge_local_rx;
 
 static inline void bridger_ewma(uint64_t *avg, uint32_t val)
 {

@@ -12,7 +12,8 @@
 
 static struct ubus_auto_conn conn;
 static KVLIST(blacklist, kvlist_blob_len);
-static bool bridge_local = false;
+static bool bridge_local_tx = true;
+bool bridge_local_rx;
 
 bool bridger_ubus_dev_blacklisted(struct device *dev)
 {
@@ -27,7 +28,7 @@ bool bridger_ubus_dev_blacklisted(struct device *dev)
 			if (dev->master &&
 			    !fnmatch(blobmsg_get_string(cur), dev->master->ifname, 0))
 				return true;
-			if (!bridge_local && dev->br)
+			if (!bridge_local_tx && dev->br)
 				return true;
 		}
 
@@ -129,13 +130,15 @@ bridger_set_device_config(struct ubus_context *ctx, struct ubus_object *obj,
 }
 
 enum {
-	BRIDGER_CONFIG_LOCAL,
+	BRIDGER_CONFIG_LOCAL_TX,
+	BRIDGER_CONFIG_LOCAL_RX,
 	BRIDGER_CONFIG_BLACKLIST,
 	__BRIDGER_CONFIG_MAX
 };
 
 static const struct blobmsg_policy config_policy[__BRIDGER_CONFIG_MAX] = {
-	[BRIDGER_CONFIG_LOCAL] = { "bridge_local", BLOBMSG_TYPE_BOOL },
+	[BRIDGER_CONFIG_LOCAL_RX] = { "bridge_local_rx", BLOBMSG_TYPE_BOOL },
+	[BRIDGER_CONFIG_LOCAL_TX] = { "bridge_local_tx", BLOBMSG_TYPE_BOOL },
 	[BRIDGER_CONFIG_BLACKLIST] = { "blacklist", BLOBMSG_TYPE_ARRAY },
 };
 
@@ -162,12 +165,15 @@ bridger_set_config(struct ubus_context *ctx, struct ubus_object *obj,
 		kvlist_delete(&blacklist, "config");
 	}
 
-	cur = tb[BRIDGER_CONFIG_LOCAL];
-	local = cur && blobmsg_get_bool(cur);
-	if (bridge_local != local) {
-		bridge_local = local;
+	cur = tb[BRIDGER_CONFIG_LOCAL_TX];
+	local = !cur || blobmsg_get_bool(cur);
+	if (bridge_local_tx != local) {
+		bridge_local_tx = local;
 		changed = true;
 	}
+
+	cur = tb[BRIDGER_CONFIG_LOCAL_RX];
+	bridge_local_rx = cur && blobmsg_get_bool(cur);
 
 	if (changed)
 		bridger_blacklist_update();
