@@ -104,9 +104,6 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (!fdb_in || !fdb_out)
 		return;
 
-	if (!bridge_local_rx && fdb_out->dev->br)
-		return;
-
 	if (device_match_phys_switch(fdb_in->dev, fdb_out->dev))
 		return;
 
@@ -141,6 +138,8 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	flow->offload.target_port = device_ifindex(fdb_out->dev);
 	flow->offload.vlan = device_vlan_get_output(fdb_out->dev, fkey.vlan);
 	flow->offload.redirect_flags = fdb_out->dev->br ? BPF_F_INGRESS : 0;
+	if (!bridge_local_rx && fdb_out->dev->br)
+		flow->offload.target_port = 0;
 
 	bridger_bpf_flow_upload(flow);
 	if (!fdb_in->dev->br && !fdb_out->dev->br)

@@ -191,7 +191,7 @@ out:
 	return dev;
 }
 
-static void device_clear_flows(struct device *dev)
+void device_clear_flows(struct device *dev)
 {
 	struct fdb_entry *f;
 

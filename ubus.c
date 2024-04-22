@@ -149,6 +149,7 @@ bridger_set_config(struct ubus_context *ctx, struct ubus_object *obj,
 {
 	struct blob_attr *tb[__BRIDGER_CONFIG_MAX];
 	struct blob_attr *cur;
+	struct device *dev;
 	bool changed = true;
 	bool local;
 
@@ -173,7 +174,13 @@ bridger_set_config(struct ubus_context *ctx, struct ubus_object *obj,
 	}
 
 	cur = tb[BRIDGER_CONFIG_LOCAL_RX];
-	bridge_local_rx = cur && blobmsg_get_bool(cur);
+	local = cur && blobmsg_get_bool(cur);
+	if (bridge_local_rx != local) {
+		bridge_local_rx = local;
+		avl_for_each_element(&devices, dev, node)
+			if (dev->br)
+				device_clear_flows(dev);
+	}
 
 	if (changed)
 		bridger_blacklist_update();

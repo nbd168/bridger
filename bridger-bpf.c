@@ -218,6 +218,9 @@ int bridger_input(struct __sk_buff *skb)
 
 	offload = bpf_map_lookup_elem(&offload_flows, &key);
 	if (offload) {
+		if (!offload->target_port)
+			return TC_ACT_UNSPEC;
+
 		ret = bridger_offload(skb, offload, &key, &flags);
 		goto out;
 	}
