@@ -27,10 +27,16 @@
 #include "ubus.h"
 
 #define D(format, ...) \
-	do { \
-		if (debug_level) \
-			fprintf(stderr, "%s(%d) " format, __func__, __LINE__, ##__VA_ARGS__); \
-	} while(0)
+	bridger_dprintf("%s(%d) " format, __func__, __LINE__, ##__VA_ARGS__)
+
+extern void bridger_dprintf(const char *format, ...);
+
+#ifdef UBUS_SUPPORT
+#include <udebug.h>
+extern struct udebug_buf udb_nl;
+void bridger_udebug_config(struct udebug_ubus *ctx, struct blob_attr *data,
+			   bool enabled);
+#endif
 
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
@@ -50,7 +56,6 @@
 #define BRIDGER_PRIO_OFFLOAD_END	BRIDGER_PRIO_OFFLOAD_UNTAG
 
 
-extern int debug_level;
 extern bool bridge_local_rx;
 
 static inline void bridger_ewma(uint64_t *avg, uint32_t val)

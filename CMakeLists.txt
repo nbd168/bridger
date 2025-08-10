@@ -7,6 +7,7 @@ ADD_DEFINITIONS(-Os -g3 -Wall -Wno-unknown-warning-option -Wno-array-bounds -Wno
 SET(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 
 OPTION(UBUS_SUPPORT "ubus support" ON)
+OPTION(NL_UDEBUG "libnl-tiny udebug support" OFF)
 
 IF (NOT DEFINED LIBNL_LIBS)
 	include(FindPkgConfig)
@@ -24,11 +25,15 @@ find_library(ubox NAMES ubox)
 IF (UBUS_SUPPORT)
   ADD_DEFINITIONS(-DUBUS_SUPPORT)
   find_library(ubus NAMES ubus)
+  find_library(udebug NAMES udebug)
   SET(SOURCES ${SOURCES} ubus.c)
+  IF (NL_UDEBUG)
+    ADD_DEFINITIONS(-DNL_UDEBUG)
+  ENDIF()
 ENDIF()
 
 ADD_EXECUTABLE(bridger ${SOURCES})
-TARGET_LINK_LIBRARIES(bridger ${bpf} ${ubox} ${ubus} ${LIBNL_LIBS})
+TARGET_LINK_LIBRARIES(bridger ${bpf} ${ubox} ${ubus} ${udebug} ${LIBNL_LIBS})
 
 INSTALL(TARGETS bridger
 	RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR}

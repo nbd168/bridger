@@ -893,6 +893,13 @@ static bool bridger_has_flow_offload(void)
 	return true;
 }
 
+static void bridger_nl_udebug_cb(void *priv, struct nl_msg *msg)
+{
+    struct nlmsghdr *nlh = nlmsg_hdr(msg);
+
+    udebug_netlink_msg(priv, nlmsg_get_proto(msg), nlh, nlh->nlmsg_len);
+}
+
 int bridger_nl_init(void)
 {
 	static struct ifinfomsg llmsg = { .ifi_family = AF_UNSPEC };
@@ -920,6 +927,13 @@ int bridger_nl_init(void)
 		  bridge_nl_error_cb, NULL);
 	nl_socket_add_membership(event_sock, RTNLGRP_LINK);
 	nl_socket_add_membership(event_sock, RTNLGRP_NEIGH);
+
+#ifdef NL_UDEBUG
+	nl_socket_set_tx_debug_cb(cmd_sock, bridger_nl_udebug_cb, &udb_nl);
+	nl_socket_set_rx_debug_cb(cmd_sock, bridger_nl_udebug_cb, &udb_nl);
+	nl_socket_set_tx_debug_cb(event_sock, bridger_nl_udebug_cb, &udb_nl);
+	nl_socket_set_rx_debug_cb(event_sock, bridger_nl_udebug_cb, &udb_nl);
+#endif
 
 	event_fd.fd = nl_socket_get_fd(event_sock);
 	event_fd.cb = bridger_nl_sock_cb;
