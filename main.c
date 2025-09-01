@@ -61,7 +61,9 @@ void bridger_dprintf(const char *format, ...)
 	if (!debug_level)
 		return;
 
+	va_start(ap, format);
 	vfprintf(stderr, format, ap);
+	va_end(ap);
 }
 
 const char *format_macaddr(const uint8_t *mac)
