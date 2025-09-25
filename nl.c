@@ -576,8 +576,6 @@ bridger_nl_flow_offload_msg(struct bridger_flow *flow, int ifindex, int cmd)
 
 	if (cmd == RTM_NEWTFILTER)
 		flags |= NLM_F_CREATE | NLM_F_EXCL;
-	else if (cmd == RTM_GETTFILTER)
-		flags |= NLM_F_DUMP;
 
 	msg = nlmsg_alloc_simple(cmd, flags);
 	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
