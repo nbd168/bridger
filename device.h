@@ -29,6 +29,7 @@ struct device {
 	bool hairpin_mode;
 	bool isolated;
 	bool offload_update;
+	bool port_forwarding;
 
 	struct device *master;
 	struct device *offload_dev;
