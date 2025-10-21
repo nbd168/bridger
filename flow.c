@@ -208,7 +208,6 @@ bridger_flow_update_cb(struct uloop_timeout *timeout)
 			continue;
 
 		bridger_nl_fdb_refresh(flow->fdb_in);
-		bridger_nl_fdb_refresh(flow->fdb_out);
 	}
 
 	uloop_timeout_set(timeout, 1000);
