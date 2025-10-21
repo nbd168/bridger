@@ -43,6 +43,7 @@ newlink_add_vlan(struct device *dev, const struct bridge_vlan_info *vinfo,
 	v->id = vid;
 	v->untagged = !!(vinfo->flags & BRIDGE_VLAN_INFO_UNTAGGED);
 	v->pvid = !!(vinfo->flags & BRIDGE_VLAN_INFO_PVID);
+	v->forwarding = 1;
 	if (v->pvid)
 		dev->pvid = vid;
 
@@ -244,6 +245,48 @@ handle_dellink(struct nlmsghdr *nh)
 	}
 }
 
+static void
+handle_vlan(struct nlmsghdr *nh)
+{
+	struct br_vlan_msg *bvm = NLMSG_DATA(nh);
+	struct nlattr *tb[BRIDGE_VLANDB_MAX + 1];
+	struct nlattr *tb_entry[BRIDGE_VLANDB_ENTRY_MAX + 1];
+	struct device *dev;
+	uint16_t vid;
+	uint8_t state;
+	bool forwarding;
+	int i;
+
+	nlmsg_parse(nh, sizeof(struct br_vlan_msg), tb, BRIDGE_VLANDB_MAX, NULL);
+	if (!tb[BRIDGE_VLANDB_ENTRY])
+		return;
+
+	dev = device_get(bvm->ifindex);
+	if (!dev || !dev->vlan)
+		return;
+
+	nla_parse_nested(tb_entry, BRIDGE_VLANDB_ENTRY_MAX, tb[BRIDGE_VLANDB_ENTRY], NULL);
+	if (!tb_entry[BRIDGE_VLANDB_ENTRY_INFO])
+		return;
+
+	vid = nla_get_u16(tb_entry[BRIDGE_VLANDB_ENTRY_INFO]);
+
+	if (tb_entry[BRIDGE_VLANDB_ENTRY_STATE])
+		state = nla_get_u8(tb_entry[BRIDGE_VLANDB_ENTRY_STATE]);
+	else
+		state = BR_STATE_FORWARDING;
+
+	forwarding = (state == BR_STATE_FORWARDING);
+
+	for (i = 0; i < dev->n_vlans; i++) {
+		if (dev->vlan[i].id == vid) {
+			dev->vlan[i].forwarding = forwarding;
+			D("Update vlan %d state=%d on device %s\n",
+			  vid, state, dev->ifname);
+			break;
+		}
+	}
+}
 
 static void
 handle_neigh(struct nlmsghdr *nh, bool add)
@@ -408,6 +451,9 @@ bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 		break;
 	case RTM_DELLINK:
 		handle_dellink(nh);
+		break;
+	case RTM_NEWVLAN:
+		handle_vlan(nh);
 		break;
 	case RTM_NEWNEIGH:
 		handle_neigh(nh, true);

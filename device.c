@@ -121,6 +121,23 @@ uint16_t device_vlan_get_output(struct device *dev, int vid)
 	return 0;
 }
 
+bool device_vlan_state_forwarding(struct device *dev, int vid)
+{
+	int i;
+
+	if (!dev->vlan)
+		return true;
+
+	for (i = 0; i < dev->n_vlans; i++) {
+		if (vid != dev->vlan[i].id)
+			continue;
+
+		return dev->vlan[i].forwarding;
+	}
+
+	return false;
+}
+
 static void
 device_set_attached(struct device *dev, bool val)
 {

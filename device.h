@@ -65,6 +65,7 @@ struct vlan {
 			uint16_t untagged : 1;
 			uint16_t pvid : 1;
 			uint16_t tunnel : 1;
+			uint16_t forwarding : 1;
 		};
 		uint16_t data;
 	};
@@ -106,6 +107,7 @@ void device_vlan_add(struct device *dev, struct vlan *vlan);
 void device_vlan_remove(struct device *dev, int id);
 int device_vlan_get_input(struct device *dev, uint16_t xdp_vlan);
 uint16_t device_vlan_get_output(struct device *dev, int vid);
+bool device_vlan_state_forwarding(struct device *dev, int vid);
 void device_update(struct device *dev);
 void device_reset_offload_update(void);
 void device_clear_flows(struct device *dev);

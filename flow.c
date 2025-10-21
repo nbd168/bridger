@@ -118,6 +118,12 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (fdb_in->dev->isolated && fdb_out->dev->isolated)
 		return;
 
+	if (!device_vlan_state_forwarding(fdb_in->dev, fkey.vlan))
+		return;
+
+	if (!device_vlan_state_forwarding(fdb_out->dev, fkey.vlan))
+		return;
+
 	flow = avl_find_element(&flows, key, flow, node);
 	if (!flow) {
 		flow = calloc(1, sizeof(*flow));
