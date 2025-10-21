@@ -77,6 +77,9 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 
 	memcpy(fkey.addr, key->src, ETH_ALEN);
 	fkey.vlan = device_vlan_get_input(dev, key->vlan);
+	if (fkey.vlan == (uint16_t)-1)
+		return;
+
 	fdb_in = fdb_get(br, &fkey);
 
 	if (dev->redirect_dev) {

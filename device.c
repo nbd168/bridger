@@ -92,7 +92,7 @@ int device_vlan_get_input(struct device *dev, uint16_t bpf_vlan)
 		if (bpf_vlan == dev->vlan[i].id)
 			return bpf_vlan;
 
-	return dev->pvid;
+	return -1;
 }
 
 uint16_t device_vlan_get_output(struct device *dev, int vid)
