@@ -103,13 +103,16 @@ int device_vlan_get_input(struct device *dev, uint16_t bpf_vlan)
 	return -1;
 }
 
-uint16_t device_vlan_get_output(struct device *dev, int vid)
+int device_vlan_get_output(struct device *dev, int vid)
 {
 	struct bridge *br = device_get_br(dev);
 	uint16_t flags = 0;
 	int i;
 
 	if (!br)
+		return 0;
+
+	if (!br->vlan_enabled)
 		return 0;
 
 	for (i = 0; i < dev->n_vlans; i++) {
@@ -126,7 +129,7 @@ uint16_t device_vlan_get_output(struct device *dev, int vid)
 		return vid | flags;
 	}
 
-	return 0;
+	return -1;
 }
 
 bool device_vlan_state_forwarding(struct device *dev, int vid)

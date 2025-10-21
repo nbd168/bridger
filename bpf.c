@@ -65,6 +65,7 @@ void bridger_bpf_dev_policy_set(struct device *dev)
 	struct bridger_policy_flow val = {};
 	unsigned int ifindex = device_ifindex(dev);
 	struct device *rdev = NULL;
+	int out_vlan;
 
 	if (dev->redirect_dev)
 		rdev = device_get(dev->redirect_dev);
@@ -74,7 +75,13 @@ void bridger_bpf_dev_policy_set(struct device *dev)
 		return;
 	}
 
-	val.flow.vlan = device_vlan_get_output(rdev, dev->pvid);
+	out_vlan = device_vlan_get_output(rdev, dev->pvid);
+	if (out_vlan < 0) {
+		bpf_map_delete_elem(map_policy, &ifindex);
+		return;
+	}
+
+	val.flow.vlan = out_vlan;
 	val.flow.target_port = device_ifindex(rdev);
 	if (dev->master)
 		memcpy(val.bridge_mac, dev->master->addr, ETH_ALEN);
