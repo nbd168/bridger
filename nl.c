@@ -923,7 +923,7 @@ bridger_open_rtnl_socket(void)
 		return NULL;
 	}
 
-	nl_socket_set_buffer_size(sock, 65536, 0);
+	nl_socket_set_buffer_size(sock, 262144, 0);
 	nl_cb_err(nl_socket_get_cb(sock), NL_CB_CUSTOM,
 		  bridge_nl_error_cb, NULL);
 
