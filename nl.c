@@ -88,6 +88,7 @@ handle_newlink_brvlan(struct device *dev, struct nlattr *info)
 
 	dev->vlan = calloc(n_vlan, sizeof(*dev->vlan));
 	dev->n_vlans = 0;
+	dev->pvid = 0;
 
 	nla_for_each_nested(cur, info, rem) {
 		if (nla_type(cur) != IFLA_BRIDGE_VLAN_INFO)
