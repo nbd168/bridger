@@ -83,6 +83,12 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 
 	fdb_in = fdb_get(br, &fkey);
 
+	if (fdb_in && fdb_in->dev != dev) {
+		D("Skip pending flow: received on %s, but fdb entry is on %s\n",
+		  dev->ifname, fdb_in->dev->ifname);
+		return;
+	}
+
 	if (dev->redirect_dev) {
 		if (!fdb_in) {
 			fdb_in = fdb_create(br, &fkey, dev);
