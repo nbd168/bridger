@@ -84,8 +84,16 @@ int device_vlan_get_input(struct device *dev, uint16_t bpf_vlan)
 
 	if (!(bpf_vlan & BRIDGER_VLAN_PRESENT) ||
 	    !!(bpf_vlan & BRIDGER_VLAN_TYPE_AD) !=
-	    (br->vlan_proto == ETH_P_8021AD))
-		return dev->pvid;
+	    (br->vlan_proto == ETH_P_8021AD)) {
+		if (!dev->pvid)
+			return -1;
+
+		for (i = 0; i < dev->n_vlans; i++)
+			if (dev->pvid == dev->vlan[i].id)
+				return dev->pvid;
+
+		return -1;
+	}
 
 	bpf_vlan &= BRIDGER_VLAN_ID;
 	for (i = 0; i < dev->n_vlans; i++)
