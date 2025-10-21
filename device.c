@@ -149,6 +149,23 @@ bool device_vlan_state_forwarding(struct device *dev, int vid)
 	return false;
 }
 
+bool device_vlan_has_tunnel(struct device *dev, int vid)
+{
+	int i;
+
+	if (!dev->vlan)
+		return false;
+
+	for (i = 0; i < dev->n_vlans; i++) {
+		if (vid != dev->vlan[i].id)
+			continue;
+
+		return dev->vlan[i].tunnel;
+	}
+
+	return false;
+}
+
 static void
 device_set_attached(struct device *dev, bool val)
 {

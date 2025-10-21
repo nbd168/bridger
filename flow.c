@@ -139,6 +139,12 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (!fdb_in->dev->port_forwarding || !fdb_out->dev->port_forwarding)
 		return;
 
+	if (device_vlan_has_tunnel(fdb_in->dev, fkey.vlan))
+		return;
+
+	if (device_vlan_has_tunnel(fdb_out->dev, fkey.vlan))
+		return;
+
 	out_vlan = device_vlan_get_output(fdb_out->dev, fkey.vlan);
 	if (out_vlan < 0)
 		return;
