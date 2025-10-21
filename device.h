@@ -55,6 +55,7 @@ struct bridge {
 	struct list_head members;
 	uint16_t vlan_proto;
 	bool vlan_enabled;
+	bool fdb_local_vlan_0;
 
 	struct avl_tree fdb;
 };

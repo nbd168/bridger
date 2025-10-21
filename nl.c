@@ -18,6 +18,10 @@
 #include <errno.h>
 #include "bridger.h"
 
+#ifndef BR_BOOLOPT_FDB_LOCAL_VLAN_0
+#define BR_BOOLOPT_FDB_LOCAL_VLAN_0 4
+#endif
+
 static struct nl_sock *event_sock, *cmd_sock;
 static struct uloop_fd event_fd;
 static bool has_flow_offload;
@@ -214,6 +218,10 @@ handle_newlink(struct nlmsghdr *nh)
 			dev->br->vlan_enabled = nla_get_u8(cur);
 		if ((cur = tbd[IFLA_BR_VLAN_PROTOCOL]) != NULL)
 			dev->br->vlan_proto = ntohs(nla_get_u16(cur));
+		if ((cur = tbd[IFLA_BR_MULTI_BOOLOPT]) != NULL) {
+			const struct br_boolopt_multi *bm = nla_data(cur);
+			dev->br->fdb_local_vlan_0 = !!(bm->optval & (1 << BR_BOOLOPT_FDB_LOCAL_VLAN_0));
+		}
 	}
 
 	if (tbp[IFLA_BRPORT_MODE])
@@ -351,6 +359,7 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 
 	f = fdb_create(br, &key, dev);
 	f->ndm_state = r->ndm_state;
+	f->is_local = (r->ndm_state == NUD_PERMANENT);
 }
 
 static void

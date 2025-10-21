@@ -16,6 +16,7 @@ struct fdb_entry {
 	struct fdb_key key;
 	uint16_t ndm_state;
 	bool updated;
+	bool is_local;
 
 	struct device *dev;
 	struct list_head dev_list;

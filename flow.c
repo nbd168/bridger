@@ -97,6 +97,14 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	memcpy(fkey.addr, key->dest, ETH_ALEN);
 	fdb_out = fdb_get(br, &fkey);
 
+	if (!fdb_out && fkey.vlan && br->fdb_local_vlan_0) {
+		struct fdb_key fkey_vlan0 = fkey;
+		fkey_vlan0.vlan = 0;
+		fdb_out = fdb_get(br, &fkey_vlan0);
+		if (fdb_out && !fdb_out->is_local)
+			fdb_out = NULL;
+	}
+
 	D("Pending flow on %s: %s -> %s @%d num_packets=%"PRIu64" -> %s\n",
 	  dev->ifname,
 	  strcpy(src, format_macaddr(key->src)),
