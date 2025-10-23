@@ -26,6 +26,7 @@ static struct nl_sock *event_sock, *cmd_sock;
 static struct uloop_fd event_fd;
 static bool has_flow_offload;
 static bool ignore_errors;
+static bool recv_idle;
 
 static int offload_handle_cmp(const void *k1, const void *k2, void *ptr)
 {
@@ -462,6 +463,7 @@ bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 {
 	struct nlmsghdr *nh = nlmsg_hdr(msg);
 
+	recv_idle = false;
 	switch (nh->nlmsg_type) {
 	case RTM_NEWLINK:
 		handle_newlink(nh);
@@ -488,7 +490,10 @@ bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 static void
 bridger_nl_sock_cb(struct uloop_fd *fd, unsigned int events)
 {
-	nl_recvmsgs_default(event_sock);
+	do {
+		recv_idle = true;
+		nl_recvmsgs_default(event_sock);
+	} while (!recv_idle);
 }
 
 static void bridger_refresh_linkinfo(void)
