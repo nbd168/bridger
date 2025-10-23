@@ -24,6 +24,7 @@
 
 static struct nl_sock *event_sock, *cmd_sock;
 static struct uloop_fd event_fd;
+static struct uloop_timeout resync_timer;
 static bool has_flow_offload;
 static bool ignore_errors;
 static bool recv_idle;
@@ -490,9 +491,13 @@ bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 static void
 bridger_nl_sock_cb(struct uloop_fd *fd, unsigned int events)
 {
+	int ret;
+
 	do {
 		recv_idle = true;
-		nl_recvmsgs_default(event_sock);
+		ret = nl_recvmsgs_default(event_sock);
+		if (ret == -NLE_NOMEM)
+			uloop_timeout_set(&resync_timer, 1);
 	} while (!recv_idle);
 }
 
@@ -968,13 +973,31 @@ static void bridger_nl_udebug_cb(void *priv, struct nl_msg *msg)
     udebug_netlink_msg(priv, nlmsg_get_proto(msg), nlh, nlh->nlmsg_len);
 }
 
-int bridger_nl_init(void)
+static void bridger_nl_resync(struct uloop_timeout *t)
 {
 	static struct ifinfomsg llmsg = { .ifi_family = AF_UNSPEC };
 	static struct ndmsg ndmsg = { .ndm_family = PF_BRIDGE };
 	static struct br_vlan_msg bvmsg = { .family = PF_BRIDGE };
 	struct nl_msg *msg;
 
+	nl_send_simple(event_sock, RTM_GETLINK, NLM_F_DUMP | NLM_F_REQUEST, &llmsg, sizeof(llmsg));
+	nl_wait_for_ack(event_sock);
+
+	msg = nlmsg_alloc_simple(RTM_GETVLAN, NLM_F_REQUEST | NLM_F_DUMP);
+	nlmsg_append(msg, &bvmsg, sizeof(bvmsg), NLMSG_ALIGNTO);
+	nla_put_u32(msg, BRIDGE_VLANDB_DUMP_FLAGS, 0);
+	nl_send_auto_complete(event_sock, msg);
+	nlmsg_free(msg);
+	nl_wait_for_ack(event_sock);
+
+	bridger_refresh_linkinfo();
+
+	nl_send_simple(event_sock, RTM_GETNEIGH, NLM_F_DUMP | NLM_F_REQUEST, &ndmsg, sizeof(ndmsg));
+	nl_wait_for_ack(event_sock);
+}
+
+int bridger_nl_init(void)
+{
 	has_flow_offload = bridger_has_flow_offload();
 
 	cmd_sock = bridger_open_rtnl_socket();
@@ -1007,20 +1030,8 @@ int bridger_nl_init(void)
 	event_fd.cb = bridger_nl_sock_cb;
 	uloop_fd_add(&event_fd, ULOOP_READ);
 
-	nl_send_simple(event_sock, RTM_GETLINK, NLM_F_DUMP | NLM_F_REQUEST, &llmsg, sizeof(llmsg));
-	nl_wait_for_ack(event_sock);
-
-	msg = nlmsg_alloc_simple(RTM_GETVLAN, NLM_F_REQUEST | NLM_F_DUMP);
-	nlmsg_append(msg, &bvmsg, sizeof(bvmsg), NLMSG_ALIGNTO);
-	nla_put_u32(msg, BRIDGE_VLANDB_DUMP_FLAGS, 0);
-	nl_send_auto_complete(event_sock, msg);
-	nlmsg_free(msg);
-	nl_wait_for_ack(event_sock);
-
-	bridger_refresh_linkinfo();
-
-	nl_send_simple(event_sock, RTM_GETNEIGH, NLM_F_DUMP | NLM_F_REQUEST, &ndmsg, sizeof(ndmsg));
-	nl_wait_for_ack(event_sock);
+	resync_timer.cb = bridger_nl_resync;
+	bridger_nl_resync(&resync_timer);
 
 	return 0;
 }
