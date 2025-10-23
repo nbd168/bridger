@@ -200,7 +200,7 @@ int bridger_input(struct __sk_buff *skb)
 		return TC_ACT_UNSPEC;
 
 	if ((eth->h_source[0] | eth->h_dest[0]) & 1)
-		goto dev_lookup;
+		return TC_ACT_UNSPEC;
 
 	if (proto == bpf_htons(ETH_P_IPV6)) {
 		struct ipv6hdr *ip6hdr;
