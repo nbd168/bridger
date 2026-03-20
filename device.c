@@ -134,9 +134,13 @@ int device_vlan_get_output(struct device *dev, int vid)
 
 bool device_vlan_state_forwarding(struct device *dev, int vid)
 {
+	struct bridge *br = device_get_br(dev);
 	int i;
 
 	if (!dev->vlan)
+		return true;
+
+	if (br && !br->vlan_enabled)
 		return true;
 
 	for (i = 0; i < dev->n_vlans; i++) {
