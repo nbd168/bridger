@@ -52,6 +52,7 @@ void bridger_flow_delete(struct bridger_flow *flow)
 	avl_delete(&flows, &flow->node);
 	bridger_bpf_flow_delete(flow);
 	bridger_nl_flow_offload_del(flow);
+	free(flow);
 }
 
 void bridger_check_pending_flow(struct bridger_flow_key *key,
@@ -207,8 +208,10 @@ bridger_flow_update_cb(struct uloop_timeout *timeout)
 
 		if (flow->cur_packets)
 			flow->idle = 0;
-		else if (++flow->idle >= 30)
+		else if (++flow->idle >= 30) {
 			bridger_flow_delete(flow);
+			continue;
+		}
 
 		if (flow->idle)
 			continue;
