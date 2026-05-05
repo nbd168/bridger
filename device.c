@@ -315,10 +315,12 @@ static void __device_update(struct device *dev)
 	}
 
 	if (master) {
-		if (master->br)
-			list_add_tail(&dev->member_list, &master->br->members);
-		else
+		if (master->br) {
+			if (list_empty(&dev->member_list))
+				list_add_tail(&dev->member_list, &master->br->members);
+		} else {
 			master = NULL;
+		}
 	}
 
 	if (dev->master != master)
