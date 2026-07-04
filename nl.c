@@ -306,9 +306,15 @@ handle_vlan_entry(struct device *dev, struct nlattr *attr)
 		if (dev->vlan[i].id < vid || dev->vlan[i].id > vid_end)
 			continue;
 
+		if (dev->vlan[i].forwarding == forwarding)
+			continue;
+
 		dev->vlan[i].forwarding = forwarding;
 		D("Update vlan %d state=%d on device %s\n",
 		  dev->vlan[i].id, state, dev->ifname);
+
+		if (!forwarding)
+			device_clear_vlan_flows(dev, dev->vlan[i].id);
 	}
 }
 

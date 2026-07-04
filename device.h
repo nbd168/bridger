@@ -114,6 +114,7 @@ bool device_vlan_has_tunnel(struct device *dev, int vid);
 void device_update(struct device *dev);
 void device_reset_offload_update(void);
 void device_clear_flows(struct device *dev);
+void device_clear_vlan_flows(struct device *dev, int vid);
 void device_clear_fdb_entries(struct device *dev, struct bridge *br);
 void device_free(struct device *dev);
 

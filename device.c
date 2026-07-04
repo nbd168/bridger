@@ -248,6 +248,26 @@ void device_clear_flows(struct device *dev)
 		fdb_clear_flows(f);
 }
 
+void device_clear_vlan_flows(struct device *dev, int vid)
+{
+	struct bridger_flow *flow, *tmp;
+	struct fdb_entry *f;
+
+	list_for_each_entry(f, &dev->fdb_entries, dev_list) {
+		if (f->key.vlan == vid) {
+			fdb_clear_flows(f);
+			continue;
+		}
+
+		if (f->key.vlan)
+			continue;
+
+		list_for_each_entry_safe(flow, tmp, &f->flows_out, fdb_out_list)
+			if (flow->fdb_in->key.vlan == vid)
+				bridger_flow_delete(flow);
+	}
+}
+
 void device_clear_fdb_entries(struct device *dev, struct bridge *br)
 {
 	struct fdb_entry *f, *tmp;
