@@ -17,8 +17,7 @@ struct bridger_flow {
 	uint64_t offload_packets;
 	int idle;
 
-	uint16_t offload_ifindex;
-	uint16_t offload_id;
+	int offload_ifindex;
 
 	struct fdb_entry *fdb_in, *fdb_out;
 	struct list_head fdb_in_list, fdb_out_list;
