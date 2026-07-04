@@ -204,6 +204,8 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 
 	if (!fdb_in->dev->br && !fdb_out->dev->br)
 		bridger_nl_flow_offload_add(flow);
+	else
+		bridger_nl_flow_offload_del(flow);
 }
 
 static void
