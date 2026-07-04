@@ -7,6 +7,7 @@
 #include "bridger.h"
 
 static int debug_level = 0;
+bool bridge_local_rx;
 
 #ifdef UBUS_SUPPORT
 static struct udebug ud;

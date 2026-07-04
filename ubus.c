@@ -14,7 +14,6 @@ static struct ubus_auto_conn conn;
 static KVLIST(blacklist, kvlist_blob_len);
 static bool bridge_local_tx = true;
 static struct udebug_ubus udebug;
-bool bridge_local_rx;
 
 bool bridger_ubus_dev_name_blacklisted(struct device *dev)
 {
