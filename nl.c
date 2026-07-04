@@ -65,12 +65,14 @@ handle_newlink_brvlan(struct device *dev, struct nlattr *info)
 {
 	struct nlattr *tb[__IFLA_BRIDGE_VLAN_TUNNEL_MAX];
 	const struct bridge_vlan_info *vinfo;
+	struct vlan *old_vlan = dev->vlan;
+	int old_n_vlans = dev->n_vlans;
 	struct nlattr *cur;
 	uint16_t vid_start = 0;
 	int start = 0, end = 0;
 	int n_vlan = 0;
 	int rem;
-	int i;
+	int i, j;
 
 	D("Update vlans on device %s\n", dev->ifname);
 
@@ -150,6 +152,17 @@ handle_newlink_brvlan(struct device *dev, struct nlattr *info)
 			    dev->vlan[i].id <= end)
 				dev->vlan[i].tunnel = 1;
 	}
+
+	for (i = 0; i < dev->n_vlans; i++)
+		for (j = 0; j < old_n_vlans; j++) {
+			if (dev->vlan[i].id != old_vlan[j].id)
+				continue;
+
+			dev->vlan[i].forwarding = old_vlan[j].forwarding;
+			break;
+		}
+
+	free(old_vlan);
 }
 
 static void
