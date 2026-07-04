@@ -248,8 +248,6 @@ handle_newlink(struct nlmsghdr *nh)
 	if (tbp[IFLA_BRPORT_STATE]) {
 		uint8_t state = nla_get_u8(tbp[IFLA_BRPORT_STATE]);
 		dev->port_forwarding = (state == BR_STATE_FORWARDING);
-	} else {
-		dev->port_forwarding = true;
 	}
 
 	device_update(dev);

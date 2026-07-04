@@ -219,6 +219,7 @@ struct device *device_create(int ifindex, enum device_type type, const char *nam
 	D("Create %s device %s, ifindex=%d\n", device_types[type], name, ifindex);
 	dev = calloc(1, sizeof(*dev));
 	dev->type = type;
+	dev->port_forwarding = true;
 	dev->node.key = (void *)(uintptr_t)ifindex;
 	avl_insert(&devices, &dev->node);
 	INIT_LIST_HEAD(&dev->fdb_entries);
