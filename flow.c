@@ -75,7 +75,7 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 		return;
 
 	dev = device_get(key->ifindex);
-	if (!dev)
+	if (!dev || !dev->attached)
 		return;
 
 	br = device_get_br(dev);
@@ -140,6 +140,9 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 		return;
 
 	if (fdb_in->dev->isolated && fdb_out->dev->isolated)
+		return;
+
+	if (bridger_ubus_dev_name_blacklisted(fdb_out->dev))
 		return;
 
 	if (!device_vlan_state_forwarding(fdb_in->dev, fkey.vlan))

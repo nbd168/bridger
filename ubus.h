@@ -9,6 +9,7 @@
 int bridger_ubus_init(void);
 void bridger_ubus_stop(void);
 bool bridger_ubus_dev_blacklisted(struct device *dev);
+bool bridger_ubus_dev_name_blacklisted(struct device *dev);
 #else
 static inline int bridger_ubus_init(void)
 {
@@ -18,6 +19,10 @@ static inline void bridger_ubus_stop(void)
 {
 }
 static inline bool bridger_ubus_dev_blacklisted(struct device *dev)
+{
+	return false;
+}
+static inline bool bridger_ubus_dev_name_blacklisted(struct device *dev)
 {
 	return false;
 }

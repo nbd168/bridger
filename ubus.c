@@ -16,14 +16,11 @@ static bool bridge_local_tx = true;
 static struct udebug_ubus udebug;
 bool bridge_local_rx;
 
-bool bridger_ubus_dev_blacklisted(struct device *dev)
+bool bridger_ubus_dev_name_blacklisted(struct device *dev)
 {
 	struct blob_attr *list, *cur;
 	const char *name;
 	int rem;
-
-	if (!bridge_local_tx && dev->br)
-		return true;
 
 	kvlist_for_each(&blacklist, name, list)
 		blobmsg_for_each_attr(cur, list, rem) {
@@ -37,11 +34,22 @@ bool bridger_ubus_dev_blacklisted(struct device *dev)
 	return false;
 }
 
+bool bridger_ubus_dev_blacklisted(struct device *dev)
+{
+	if (!bridge_local_tx && dev->br)
+		return true;
+
+	return bridger_ubus_dev_name_blacklisted(dev);
+}
+
 static void bridger_blacklist_update(void)
 {
 	struct device *dev;
 
 	avl_for_each_element(&devices, dev, node) {
+		if (bridger_ubus_dev_name_blacklisted(dev))
+			device_clear_flows(dev);
+
 		if (dev->attached ==
 		    ((dev->master || dev->br) && !bridger_ubus_dev_blacklisted(dev)))
 			continue;
