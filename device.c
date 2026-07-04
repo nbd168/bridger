@@ -283,6 +283,7 @@ void device_clear_fdb_entries(struct device *dev, struct bridge *br)
 void device_free(struct device *dev)
 {
 	struct bridge *br = device_get_br(dev);
+	struct device *cur;
 
 	D("Free device %s\n", dev->ifname);
 
@@ -301,6 +302,29 @@ void device_free(struct device *dev)
 	device_set_attached(dev, false);
 	if (dev->master)
 		list_del(&dev->member_list);
+
+	avl_for_each_element(&devices, cur, node)
+		if (cur->offload_dev == dev)
+			cur->offload_dev = NULL;
+
+	if (dev->br) {
+		struct device *member, *mtmp;
+		struct fdb_entry *f, *ftmp;
+
+		list_for_each_entry_safe(member, mtmp, &dev->br->members, member_list) {
+			device_clear_fdb_entries(member, dev->br);
+			member->master = NULL;
+			member->master_ifindex = 0;
+			list_del_init(&member->member_list);
+			device_update(member);
+		}
+
+		avl_for_each_element_safe(&dev->br->fdb, f, node, ftmp)
+			fdb_delete(dev->br, f);
+
+		free(dev->br);
+	}
+
 	free(dev->vlan);
 	free(dev);
 }
