@@ -299,7 +299,10 @@ void device_free(struct device *dev)
 		D("WARN freeing device %s with orphaned fdb entries\n", dev->ifname);
 
 	device_clear_fdb_entries(dev, br);
+	device_set_tx_attached(dev, false);
 	device_set_attached(dev, false);
+	dev->redirect_dev = 0;
+	bridger_bpf_dev_policy_set(dev);
 	if (dev->master)
 		list_del(&dev->member_list);
 
