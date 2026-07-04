@@ -351,8 +351,10 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 	struct bridge *br;
 	const uint8_t *addr;
 
-	if (r->ndm_family != AF_BRIDGE ||
-	    r->ndm_state == NUD_STALE)
+	if (r->ndm_family != AF_BRIDGE)
+		return;
+
+	if (add && r->ndm_state == NUD_STALE)
 		return;
 
 	nlmsg_parse(nh, sizeof(struct ndmsg), tb, NDA_MAX, NULL);
