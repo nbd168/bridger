@@ -999,14 +999,14 @@ static void bridger_nl_resync(struct uloop_timeout *t)
 	nl_send_simple(event_sock, RTM_GETLINK, NLM_F_DUMP | NLM_F_REQUEST, &llmsg, sizeof(llmsg));
 	nl_wait_for_ack(event_sock);
 
+	bridger_refresh_linkinfo();
+
 	msg = nlmsg_alloc_simple(RTM_GETVLAN, NLM_F_REQUEST | NLM_F_DUMP);
 	nlmsg_append(msg, &bvmsg, sizeof(bvmsg), NLMSG_ALIGNTO);
 	nla_put_u32(msg, BRIDGE_VLANDB_DUMP_FLAGS, 0);
 	nl_send_auto_complete(event_sock, msg);
 	nlmsg_free(msg);
 	nl_wait_for_ack(event_sock);
-
-	bridger_refresh_linkinfo();
 
 	nl_send_simple(event_sock, RTM_GETNEIGH, NLM_F_DUMP | NLM_F_REQUEST, &ndmsg, sizeof(ndmsg));
 	nl_wait_for_ack(event_sock);
