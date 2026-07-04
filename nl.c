@@ -271,8 +271,7 @@ handle_dellink(struct nlmsghdr *nh)
 		device_free(dev);
 		break;
 	case PF_BRIDGE:
-		dev->master_ifindex = 0;
-		device_update(dev);
+		handle_newlink(nh);
 		break;
 	}
 }
@@ -504,6 +503,7 @@ bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 	recv_idle = false;
 	switch (nh->nlmsg_type) {
 	case RTM_NEWLINK:
+	case RTM_SETLINK:
 		handle_newlink(nh);
 		break;
 	case RTM_DELLINK:
