@@ -264,45 +264,59 @@ handle_dellink(struct nlmsghdr *nh)
 }
 
 static void
-handle_vlan(struct nlmsghdr *nh)
+handle_vlan_entry(struct device *dev, struct nlattr *attr)
 {
-	struct br_vlan_msg *bvm = NLMSG_DATA(nh);
-	struct nlattr *tb[BRIDGE_VLANDB_MAX + 1];
-	struct nlattr *tb_entry[BRIDGE_VLANDB_ENTRY_MAX + 1];
-	struct device *dev;
-	uint16_t vid;
+	struct nlattr *tb[BRIDGE_VLANDB_ENTRY_MAX + 1];
+	const struct bridge_vlan_info *vinfo;
+	uint16_t vid, vid_end;
 	uint8_t state;
 	bool forwarding;
 	int i;
 
-	nlmsg_parse(nh, sizeof(struct br_vlan_msg), tb, BRIDGE_VLANDB_MAX, NULL);
-	if (!tb[BRIDGE_VLANDB_ENTRY])
+	nla_parse_nested(tb, BRIDGE_VLANDB_ENTRY_MAX, attr, NULL);
+	if (!tb[BRIDGE_VLANDB_ENTRY_INFO])
 		return;
 
-	dev = device_get(bvm->ifindex);
-	if (!dev || !dev->vlan)
-		return;
+	vinfo = nla_data(tb[BRIDGE_VLANDB_ENTRY_INFO]);
+	vid = vid_end = vinfo->vid;
+	if (tb[BRIDGE_VLANDB_ENTRY_RANGE])
+		vid_end = nla_get_u16(tb[BRIDGE_VLANDB_ENTRY_RANGE]);
 
-	nla_parse_nested(tb_entry, BRIDGE_VLANDB_ENTRY_MAX, tb[BRIDGE_VLANDB_ENTRY], NULL);
-	if (!tb_entry[BRIDGE_VLANDB_ENTRY_INFO])
-		return;
-
-	vid = nla_get_u16(tb_entry[BRIDGE_VLANDB_ENTRY_INFO]);
-
-	if (tb_entry[BRIDGE_VLANDB_ENTRY_STATE])
-		state = nla_get_u8(tb_entry[BRIDGE_VLANDB_ENTRY_STATE]);
+	if (tb[BRIDGE_VLANDB_ENTRY_STATE])
+		state = nla_get_u8(tb[BRIDGE_VLANDB_ENTRY_STATE]);
 	else
 		state = BR_STATE_FORWARDING;
 
 	forwarding = (state == BR_STATE_FORWARDING);
 
 	for (i = 0; i < dev->n_vlans; i++) {
-		if (dev->vlan[i].id == vid) {
-			dev->vlan[i].forwarding = forwarding;
-			D("Update vlan %d state=%d on device %s\n",
-			  vid, state, dev->ifname);
-			break;
-		}
+		if (dev->vlan[i].id < vid || dev->vlan[i].id > vid_end)
+			continue;
+
+		dev->vlan[i].forwarding = forwarding;
+		D("Update vlan %d state=%d on device %s\n",
+		  dev->vlan[i].id, state, dev->ifname);
+	}
+}
+
+static void
+handle_vlan(struct nlmsghdr *nh)
+{
+	struct br_vlan_msg *bvm = NLMSG_DATA(nh);
+	struct nlattr *cur;
+	struct device *dev;
+	int rem;
+
+	dev = device_get(bvm->ifindex);
+	if (!dev || !dev->vlan)
+		return;
+
+	nla_for_each_attr(cur, nlmsg_attrdata(nh, sizeof(struct br_vlan_msg)),
+			  nlmsg_attrlen(nh, sizeof(struct br_vlan_msg)), rem) {
+		if (nla_type(cur) != BRIDGE_VLANDB_ENTRY)
+			continue;
+
+		handle_vlan_entry(dev, cur);
 	}
 }
 
@@ -1020,6 +1034,7 @@ int bridger_nl_init(void)
 		  bridge_nl_error_cb, NULL);
 	nl_socket_add_membership(event_sock, RTNLGRP_LINK);
 	nl_socket_add_membership(event_sock, RTNLGRP_NEIGH);
+	nl_socket_add_membership(event_sock, RTNLGRP_BRVLAN);
 
 #ifdef NL_UDEBUG
 	nl_socket_set_tx_debug_cb(cmd_sock, bridger_nl_udebug_cb, &udb_nl);
