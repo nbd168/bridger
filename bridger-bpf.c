@@ -92,9 +92,19 @@ bridger_offload(struct __sk_buff *skb, struct bridger_offload_flow *offload,
 
 	diff = key->vlan ^ offload->vlan;
 	if (diff & (BRIDGER_VLAN_FLAGS | BRIDGER_VLAN_ID)) {
-		if ((key->vlan & BRIDGER_VLAN_PRESENT) &&
-			 bpf_skb_vlan_pop(skb))
+		u16 tci = 0;
+
+		if (key->vlan & BRIDGER_VLAN_PRESENT) {
+			if (skb->vlan_present) {
+				tci = skb->vlan_tci;
+			} else {
+				vlan = data + sizeof(eth);
+				tci = bpf_ntohs(vlan->tci);
+			}
+
+			if (bpf_skb_vlan_pop(skb))
 				return -1;
+		}
 
 		if (offload->vlan & BRIDGER_VLAN_PRESENT) {
 			__be16 proto;
@@ -104,7 +114,9 @@ bridger_offload(struct __sk_buff *skb, struct bridger_offload_flow *offload,
 			else
 				proto = bpf_htons(ETH_P_8021Q);
 
-			if (bpf_skb_vlan_push(skb, proto, offload->vlan & BRIDGER_VLAN_ID))
+			tci &= ~BRIDGER_VLAN_ID;
+			tci |= offload->vlan & BRIDGER_VLAN_ID;
+			if (bpf_skb_vlan_push(skb, proto, tci))
 				return -1;
 		}
 	}
