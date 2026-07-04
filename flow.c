@@ -16,7 +16,12 @@ static int flow_key_cmp(const void *k1, const void *k2, void *ptr)
 
 static int flow_sort_key_cmp(const void *k1, const void *k2, void *ptr)
 {
-	return memcmp(k1, k2, sizeof(uint64_t));
+	const uint64_t *v1 = k1, *v2 = k2;
+
+	if (*v1 != *v2)
+		return *v1 < *v2 ? -1 : 1;
+
+	return 0;
 }
 
 static AVL_TREE(flows, flow_key_cmp, false, NULL);
@@ -162,6 +167,7 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 		flow->node.key = &flow->key;
 		flow->sort_node.key = &flow->avg_packets;
 		memcpy(&flow->key, key, sizeof(flow->key));
+		bridger_ewma(&flow->avg_packets, val->packets);
 		avl_insert(&flows, &flow->node);
 	} else {
 		__bridger_flow_delete(flow);
@@ -179,11 +185,22 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (!bridge_local_rx && fdb_out->dev->br)
 		flow->offload.target_port = 0;
 
-	bridger_bpf_flow_upload(flow);
+	avl_insert(&sorted_flows, &flow->sort_node);
+
+	while (bridger_bpf_flow_upload(flow)) {
+		struct bridger_flow *victim;
+
+		victim = avl_first_element(&sorted_flows, victim, sort_node);
+		if (victim == flow || victim->avg_packets >= flow->avg_packets) {
+			bridger_flow_delete(flow);
+			return;
+		}
+
+		bridger_flow_delete(victim);
+	}
+
 	if (!fdb_in->dev->br && !fdb_out->dev->br)
 		bridger_nl_flow_offload_add(flow);
-
-	avl_insert(&sorted_flows, &flow->sort_node);
 }
 
 static void

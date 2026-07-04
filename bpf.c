@@ -35,14 +35,14 @@ static void bridger_init_env(void)
 	setrlimit(RLIMIT_MEMLOCK, &limit);
 }
 
-void bridger_bpf_flow_upload(struct bridger_flow *flow)
+int bridger_bpf_flow_upload(struct bridger_flow *flow)
 {
 	struct bridger_offload_flow val;
 
 	if (bpf_map_lookup_elem(map_offload, &flow->key, &val) == 0)
 		flow->offload.packets = val.packets;
 
-	bpf_map_update_elem(map_offload, &flow->key, &flow->offload, BPF_ANY);
+	return bpf_map_update_elem(map_offload, &flow->key, &flow->offload, BPF_ANY);
 }
 
 void bridger_bpf_flow_update(struct bridger_flow *flow)
