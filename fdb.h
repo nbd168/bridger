@@ -17,6 +17,7 @@ struct fdb_entry {
 	uint16_t ndm_state;
 	bool updated;
 	bool is_local;
+	bool resync_seen;
 
 	struct device *dev;
 	struct list_head dev_list;

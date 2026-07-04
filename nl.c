@@ -3,6 +3,7 @@
  * Copyright (C) 2022 Felix Fietkau <nbd@nbd.name>
  */
 #define _GNU_SOURCE
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/utsname.h>
 #include <netinet/if_ether.h>
@@ -202,6 +203,8 @@ handle_newlink(struct nlmsghdr *nh)
 			return;
 	}
 
+	dev->resync_seen = true;
+
 	if ((cur = tb[IFLA_ADDRESS]) != NULL &&
 	    nla_len(cur) == ETH_ALEN)
 		memcpy(dev->addr, nla_data(cur), ETH_ALEN);
@@ -393,6 +396,7 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 	f = fdb_create(br, &key, dev);
 	f->ndm_state = r->ndm_state;
 	f->is_local = (r->ndm_state == NUD_PERMANENT);
+	f->resync_seen = true;
 }
 
 static void
@@ -532,7 +536,93 @@ bridger_nl_sock_cb(struct uloop_fd *fd, unsigned int events)
 	} while (!recv_idle);
 }
 
-static void bridger_refresh_linkinfo(void)
+static bool resync_done;
+static bool resync_error;
+static uint32_t resync_seq;
+
+static int
+bridger_nl_resync_finish_cb(struct nl_msg *msg, void *arg)
+{
+	struct nlmsghdr *nh = nlmsg_hdr(msg);
+
+	if (nh->nlmsg_seq != resync_seq)
+		return NL_SKIP;
+
+	if (nh->nlmsg_flags & NLM_F_DUMP_INTR)
+		resync_error = true;
+
+	resync_done = true;
+	return NL_STOP;
+}
+
+static int
+bridger_nl_resync_error_cb(struct sockaddr_nl *nla, struct nlmsgerr *err,
+			   void *arg)
+{
+	struct nlmsghdr *nlh = (struct nlmsghdr *)err - 1;
+
+	if (nlh->nlmsg_seq != resync_seq)
+		return NL_SKIP;
+
+	resync_error = true;
+	resync_done = true;
+	return NL_STOP;
+}
+
+static int
+bridger_nl_resync_wait(void)
+{
+	struct pollfd pfd = {
+		.fd = nl_socket_get_fd(event_sock),
+		.events = POLLIN,
+	};
+	struct nl_cb *cb;
+	int ret = 0;
+
+	cb = nl_cb_clone(nl_socket_get_cb(event_sock));
+	if (!cb)
+		return -1;
+
+	nl_cb_set(cb, NL_CB_FINISH, NL_CB_CUSTOM, bridger_nl_resync_finish_cb, NULL);
+	nl_cb_err(cb, NL_CB_CUSTOM, bridger_nl_resync_error_cb, NULL);
+
+	resync_done = false;
+	resync_error = false;
+
+	while (!resync_done) {
+		if (poll(&pfd, 1, 1000) <= 0) {
+			ret = -1;
+			break;
+		}
+
+		ret = nl_recvmsgs(event_sock, cb);
+		if (ret < 0)
+			break;
+	}
+
+	nl_cb_put(cb);
+
+	if (ret < 0 || resync_error)
+		return -1;
+
+	return 0;
+}
+
+static int
+bridger_nl_resync_request(struct nl_msg *msg)
+{
+	int ret;
+
+	ret = nl_send_auto_complete(event_sock, msg);
+	resync_seq = nlmsg_hdr(msg)->nlmsg_seq;
+	nlmsg_free(msg);
+	if (ret < 0)
+		return -1;
+
+	return bridger_nl_resync_wait();
+}
+
+static int bridger_refresh_linkinfo(void)
 {
 	static struct ifinfomsg llmsg = { .ifi_family = PF_BRIDGE };
 	struct nl_msg *msg;
@@ -540,9 +630,8 @@ static void bridger_refresh_linkinfo(void)
 	msg = nlmsg_alloc_simple(RTM_GETLINK, NLM_F_REQUEST | NLM_F_DUMP);
 	nlmsg_append(msg, &llmsg, sizeof(llmsg), 0);
 	nla_put_u32(msg, IFLA_EXT_MASK, RTEXT_FILTER_BRVLAN);
-	nl_send_auto_complete(event_sock, msg);
-	nlmsg_free(msg);
-	nl_wait_for_ack(event_sock);
+
+	return bridger_nl_resync_request(msg);
 }
 
 static int bridger_nl_set_bpf_prog(int ifindex, int fd, bool ingress)
@@ -1018,22 +1107,57 @@ static void bridger_nl_resync(struct uloop_timeout *t)
 	static struct ifinfomsg llmsg = { .ifi_family = AF_UNSPEC };
 	static struct ndmsg ndmsg = { .ndm_family = PF_BRIDGE };
 	static struct br_vlan_msg bvmsg = { .family = PF_BRIDGE };
+	struct device *dev, *dtmp;
+	struct fdb_entry *f, *ftmp;
 	struct nl_msg *msg;
 
-	nl_send_simple(event_sock, RTM_GETLINK, NLM_F_DUMP | NLM_F_REQUEST, &llmsg, sizeof(llmsg));
-	nl_wait_for_ack(event_sock);
+	avl_for_each_element(&devices, dev, node)
+		dev->resync_seen = false;
 
-	bridger_refresh_linkinfo();
+	msg = nlmsg_alloc_simple(RTM_GETLINK, NLM_F_REQUEST | NLM_F_DUMP);
+	nlmsg_append(msg, &llmsg, sizeof(llmsg), NLMSG_ALIGNTO);
+	if (bridger_nl_resync_request(msg))
+		goto retry;
+
+	avl_for_each_element_safe(&devices, dev, node, dtmp)
+		if (!dev->resync_seen)
+			device_free(dev);
+
+	if (bridger_refresh_linkinfo())
+		goto retry;
 
 	msg = nlmsg_alloc_simple(RTM_GETVLAN, NLM_F_REQUEST | NLM_F_DUMP);
 	nlmsg_append(msg, &bvmsg, sizeof(bvmsg), NLMSG_ALIGNTO);
 	nla_put_u32(msg, BRIDGE_VLANDB_DUMP_FLAGS, 0);
-	nl_send_auto_complete(event_sock, msg);
-	nlmsg_free(msg);
-	nl_wait_for_ack(event_sock);
+	if (bridger_nl_resync_request(msg))
+		goto retry;
 
-	nl_send_simple(event_sock, RTM_GETNEIGH, NLM_F_DUMP | NLM_F_REQUEST, &ndmsg, sizeof(ndmsg));
-	nl_wait_for_ack(event_sock);
+	avl_for_each_element(&devices, dev, node) {
+		if (!dev->br)
+			continue;
+
+		avl_for_each_element(&dev->br->fdb, f, node)
+			f->resync_seen = false;
+	}
+
+	msg = nlmsg_alloc_simple(RTM_GETNEIGH, NLM_F_REQUEST | NLM_F_DUMP);
+	nlmsg_append(msg, &ndmsg, sizeof(ndmsg), NLMSG_ALIGNTO);
+	if (bridger_nl_resync_request(msg))
+		goto retry;
+
+	avl_for_each_element(&devices, dev, node) {
+		if (!dev->br)
+			continue;
+
+		avl_for_each_element_safe(&dev->br->fdb, f, node, ftmp)
+			if (!f->resync_seen)
+				fdb_delete(dev->br, f);
+	}
+
+	return;
+
+retry:
+	uloop_timeout_set(t, 1000);
 }
 
 int bridger_nl_init(void)
