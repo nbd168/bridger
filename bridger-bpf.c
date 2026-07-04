@@ -71,7 +71,7 @@ skb_ptr(struct __sk_buff *skb, int offset, int len)
 	void *ptr = __skb_data(skb) + offset;
 	void *end = (void *)(long)(skb->data_end);
 
-	if (ptr + len >= end)
+	if (ptr + len > end)
 		return NULL;
 
 	return ptr;
