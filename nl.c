@@ -541,6 +541,7 @@ static void bridger_refresh_linkinfo(void)
 	nlmsg_append(msg, &llmsg, sizeof(llmsg), 0);
 	nla_put_u32(msg, IFLA_EXT_MASK, RTEXT_FILTER_BRVLAN);
 	nl_send_auto_complete(event_sock, msg);
+	nlmsg_free(msg);
 	nl_wait_for_ack(event_sock);
 }
 
