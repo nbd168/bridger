@@ -814,6 +814,11 @@ int bridger_nl_flow_offload_add(struct bridger_flow *flow)
 
 void bridger_nl_flow_offload_update(struct bridger_flow *flow)
 {
+	struct tcmsg tcmsg = {
+		.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS),
+		.tcm_family = AF_UNSPEC,
+		.tcm_ifindex = flow->offload_ifindex,
+	};
 	struct nl_msg *msg;
 	struct device *dev;
 
@@ -831,7 +836,8 @@ void bridger_nl_flow_offload_update(struct bridger_flow *flow)
 		return;
 
 	dev->offload_update = false;
-	msg = bridger_nl_flow_offload_msg(flow, flow->offload_ifindex, RTM_GETTFILTER);
+	msg = nlmsg_alloc_simple(RTM_GETTFILTER, NLM_F_REQUEST | NLM_F_DUMP);
+	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
 	nl_send_auto_complete(cmd_sock, msg);
 	nlmsg_free(msg);
 	nl_wait_for_ack(cmd_sock);

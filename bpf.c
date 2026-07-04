@@ -51,8 +51,7 @@ void bridger_bpf_flow_update(struct bridger_flow *flow)
 
 	bpf_map_lookup_elem(map_offload, &flow->key, &flow->offload);
 
-	flow->cur_packets = flow->offload.packets - prev_packets;
-	bridger_ewma(&flow->avg_packets, flow->cur_packets);
+	flow->cur_packets += flow->offload.packets - prev_packets;
 }
 
 void bridger_bpf_flow_delete(struct bridger_flow *flow)
