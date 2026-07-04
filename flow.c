@@ -210,12 +210,17 @@ static void
 bridger_flow_update_cb(struct uloop_timeout *timeout)
 {
 	struct bridger_flow *flow, *tmp;
+	struct fdb_entry *f;
+	struct device *dev;
 
 	device_reset_offload_update();
 
-	avl_for_each_element(&flows, flow, node) {
-		flow->fdb_in->updated = false;
-		flow->fdb_out->updated = false;
+	avl_for_each_element(&devices, dev, node) {
+		if (!dev->br)
+			continue;
+
+		avl_for_each_element(&dev->br->fdb, f, node)
+			f->updated = false;
 	}
 
 	avl_for_each_element_safe(&flows, flow, node, tmp) {
