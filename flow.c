@@ -95,9 +95,32 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	fdb_in = fdb_get(br, &fkey);
 
 	if (fdb_in && fdb_in->dev != dev) {
-		D("Skip pending flow: received on %s, but fdb entry is on %s\n",
-		  dev->ifname, fdb_in->dev->ifname);
+		D("Pending flow disagrees with FDB: %s on %s, packet on %s\n",
+		  format_macaddr(fkey.addr), fdb_in->dev->ifname, dev->ifname);
+		/*
+		 * The kernel reports every port change, so for an entry it
+		 * reported, the record is stale or an update is still queued.
+		 * Only an entry made from a pending record needs a resync.
+		 */
+		if (fdb_in->invalidated || fdb_in->kernel_seen)
+			return;
+
+		fdb_invalidate(fdb_in);
+		bridger_nl_request_resync();
 		return;
+	}
+
+	if (fdb_in && fdb_in->invalidated) {
+		/*
+		 * Behind a redirect, the kernel learns only from ARP, ND and
+		 * broadcast frames. Invalidation flushed older records (best
+		 * effort), so this record confirms the entry.
+		 */
+		if (!dev->redirect_dev || !fdb_in->kernel_seen)
+			return;
+
+		fdb_in->kernel_seen = false;
+		fdb_set_device(fdb_in, dev);
 	}
 
 	if (dev->redirect_dev) {
@@ -130,7 +153,7 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	  key->vlan & BRIDGER_VLAN_ID, val->packets,
 	  fdb_out ? fdb_out->dev->ifname : "(unknown)");
 
-	if (!fdb_in || !fdb_out)
+	if (!fdb_in || !fdb_out || fdb_out->invalidated)
 		return;
 
 	if (device_match_phys_switch(fdb_in->dev, fdb_out->dev))

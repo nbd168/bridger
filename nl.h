@@ -6,6 +6,7 @@
 #define __BRIDGER_NL_H
 
 int bridger_nl_init(void);
+void bridger_nl_request_resync(void);
 
 int bridger_nl_device_attach(struct device *dev, bool tx);
 void bridger_nl_device_detach(struct device *dev, bool tx);
