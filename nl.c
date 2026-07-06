@@ -386,8 +386,8 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 
 	if (!add) {
 		f = fdb_get(br, &key);
-		if (f)
-			fdb_delete(br, f);
+		if (f && f->dev == dev)
+			fdb_schedule_delete(f);
 		return;
 	}
 
@@ -525,6 +525,12 @@ bridger_nl_event_cb(struct nl_msg *msg, void *arg)
 	return NL_SKIP;
 }
 
+void bridger_nl_request_resync(void)
+{
+	if (!resync_timer.pending)
+		uloop_timeout_set(&resync_timer, 1);
+}
+
 static void
 bridger_nl_sock_cb(struct uloop_fd *fd, unsigned int events)
 {
@@ -534,7 +540,7 @@ bridger_nl_sock_cb(struct uloop_fd *fd, unsigned int events)
 		recv_idle = true;
 		ret = nl_recvmsgs_default(event_sock);
 		if (ret == -NLE_NOMEM)
-			uloop_timeout_set(&resync_timer, 1);
+			bridger_nl_request_resync();
 	} while (!recv_idle);
 }
 
@@ -1002,7 +1008,8 @@ int bridger_nl_fdb_refresh(struct fdb_entry *f)
 	struct nl_msg *msg;
 	int ret;
 
-	if (!f->dev || f->updated || (f->ndm_state & NUD_PERMANENT))
+	if (!f->dev || f->invalidated || f->updated ||
+	    (f->ndm_state & NUD_PERMANENT))
 		return 0;
 
 	ndmsg.ndm_ifindex = device_ifindex(f->dev);

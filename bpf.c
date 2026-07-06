@@ -64,6 +64,46 @@ void bridger_bpf_flow_delete(struct bridger_flow *flow)
 	bpf_map_delete_elem(map_offload, &flow->key);
 }
 
+/*
+ * Snapshot keys before deleting: a deleted iterator key restarts a hash-map
+ * walk. Bound the walk since the dataplane can change the map.
+ */
+static unsigned int
+bridger_bpf_pending_keys(struct bridger_flow_key *keys, unsigned int max_keys)
+{
+	const struct bridger_flow_key *prev = NULL;
+	unsigned int i;
+
+	for (i = 0; i < max_keys; i++) {
+		if (bpf_map_get_next_key(map_pending, prev, &keys[i]))
+			break;
+		prev = &keys[i];
+	}
+
+	return i;
+}
+
+void bridger_bpf_flush_pending(struct device *dev, const struct fdb_key *fkey)
+{
+	unsigned int ifindex = device_ifindex(dev);
+	struct bridger_flow_key keys[BRIDGER_PENDING_FLOWS];
+	unsigned int i, n;
+
+	n = bridger_bpf_pending_keys(keys, ARRAY_SIZE(keys));
+
+	for (i = 0; i < n; i++) {
+		const struct bridger_flow_key *key = &keys[i];
+
+		if (key->ifindex != ifindex ||
+		    device_vlan_get_input(dev, key->vlan) != fkey->vlan)
+			continue;
+		if (memcmp(key->src, fkey->addr, ETH_ALEN))
+			continue;
+
+		bpf_map_delete_elem(map_pending, key);
+	}
+}
+
 void bridger_bpf_dev_policy_set(struct device *dev)
 {
 	struct bridger_policy_flow val = {};
@@ -94,15 +134,18 @@ void bridger_bpf_dev_policy_set(struct device *dev)
 
 static void bridger_bpf_poll_pending(struct uloop_timeout *timeout)
 {
-	struct bridger_flow_key key = {};
+	struct bridger_flow_key keys[BRIDGER_PENDING_FLOWS];
 	struct bridger_pending_flow val;
+	unsigned int i, n;
 
-	while (bpf_map_get_next_key(map_pending, &key, &key) == 0) {
-		if (bpf_map_lookup_elem(map_pending, &key, &val))
+	n = bridger_bpf_pending_keys(keys, ARRAY_SIZE(keys));
+
+	for (i = 0; i < n; i++) {
+		if (bpf_map_lookup_elem(map_pending, &keys[i], &val))
 			continue;
 
-		bpf_map_delete_elem(map_pending, &key);
-		bridger_check_pending_flow(&key, &val);
+		bpf_map_delete_elem(map_pending, &keys[i]);
+		bridger_check_pending_flow(&keys[i], &val);
 	}
 
 	uloop_timeout_set(timeout, 1000);

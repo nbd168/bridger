@@ -95,10 +95,27 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	fdb_in = fdb_get(br, &fkey);
 
 	if (fdb_in && fdb_in->dev != dev) {
-		D("Skip pending flow: received on %s, but fdb entry is on %s\n",
-		  dev->ifname, fdb_in->dev->ifname);
+		D("Pending flow disagrees with FDB: %s on %s, packet on %s\n",
+		  format_macaddr(fkey.addr), fdb_in->dev->ifname, dev->ifname);
+		/*
+		 * Pending records have no ordering information. Stop forwarding
+		 * through the cached entry and let the kernel confirm its port.
+		 * Skip entries the kernel won't move: local ones, and ones a
+		 * resync already confirmed on their port (static entries,
+		 * ports without learning). Otherwise each poll would tear down
+		 * the flows and trigger another full resync.
+		 */
+		if (fdb_in->invalidated || fdb_in->is_local ||
+		    fdb_in->port_confirmed)
+			return;
+
+		fdb_invalidate(fdb_in);
+		bridger_nl_request_resync();
 		return;
 	}
+
+	if (fdb_in && fdb_in->invalidated)
+		return;
 
 	if (dev->redirect_dev) {
 		if (!fdb_in) {
@@ -130,7 +147,7 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	  key->vlan & BRIDGER_VLAN_ID, val->packets,
 	  fdb_out ? fdb_out->dev->ifname : "(unknown)");
 
-	if (!fdb_in || !fdb_out)
+	if (!fdb_in || !fdb_out || fdb_out->invalidated)
 		return;
 
 	if (device_match_phys_switch(fdb_in->dev, fdb_out->dev))
