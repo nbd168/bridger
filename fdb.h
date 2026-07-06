@@ -12,12 +12,14 @@ struct fdb_key {
 
 struct fdb_entry {
 	struct avl_node node;
+	struct uloop_timeout delete_timer;
 
 	struct fdb_key key;
 	uint16_t ndm_state;
 	bool updated;
 	bool is_local;
 
+	struct bridge *br;
 	struct device *dev;
 	struct list_head dev_list;
 
@@ -29,6 +31,7 @@ void fdb_init(struct bridge *br);
 struct fdb_entry *fdb_get(struct bridge *br, const struct fdb_key *key);
 struct fdb_entry *fdb_create(struct bridge *br, const struct fdb_key *key, struct device *dev);
 void fdb_delete(struct bridge *br, struct fdb_entry *f);
+void fdb_schedule_delete(struct bridge *br, struct fdb_entry *f);
 void fdb_set_device(struct fdb_entry *f, struct device *dev);
 void fdb_clear_flows(struct fdb_entry *f);
 

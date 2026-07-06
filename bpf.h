@@ -13,5 +13,6 @@ void bridger_bpf_dev_policy_set(struct device *dev);
 void bridger_bpf_flow_upload(struct bridger_flow *flow);
 void bridger_bpf_flow_update(struct bridger_flow *flow);
 void bridger_bpf_flow_delete(struct bridger_flow *flow);
+void bridger_bpf_flush_pending_by_dev(struct device *dev);
 
 #endif

@@ -60,6 +60,26 @@ void bridger_bpf_flow_delete(struct bridger_flow *flow)
 	bpf_map_delete_elem(map_offload, &flow->key);
 }
 
+void bridger_bpf_flush_pending_by_dev(struct device *dev)
+{
+	unsigned int ifindex = device_ifindex(dev);
+	struct bridger_flow_key key = {}, next;
+
+	/*
+	 * Remove every pending_flows entry that arrived on the old interface.
+	 * Without this, stale entries trigger a backwards fdb_set_device() on
+	 * the same poll cycle, re-creating TC filters for the departed radio.
+	 * Keep 'key' at the last valid (non-deleted) entry so get_next_key
+	 * has a stable anchor after each deletion.
+	 */
+	while (bpf_map_get_next_key(map_pending, &key, &next) == 0) {
+		if (next.ifindex == ifindex)
+			bpf_map_delete_elem(map_pending, &next);
+		else
+			key = next;
+	}
+}
+
 void bridger_bpf_dev_policy_set(struct device *dev)
 {
 	struct bridger_policy_flow val = {};
