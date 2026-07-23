@@ -69,6 +69,8 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	char src[20], dest[20];
 	struct device *dev;
 	struct fdb_key fkey = {};
+	uint16_t redirect_flags;
+	uint32_t target_port;
 	int out_vlan;
 
 	if (!memcmp(key->src, key->dest, ETH_ALEN))
@@ -164,16 +166,28 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (out_vlan < 0)
 		return;
 
+	target_port = device_ifindex(fdb_out->dev);
+	redirect_flags = fdb_out->dev->br ? BPF_F_INGRESS : 0;
+	if (!bridge_local_rx && fdb_out->dev->br)
+		target_port = 0;
+
 	flow = avl_find_element(&flows, key, flow, node);
-	if (!flow) {
+	if (flow) {
+		flow->cur_packets += val->packets;
+		if (flow->fdb_in == fdb_in && flow->fdb_out == fdb_out &&
+		    flow->offload.target_port == target_port &&
+		    flow->offload.vlan == out_vlan &&
+		    flow->offload.redirect_flags == redirect_flags)
+			return;
+
+		__bridger_flow_delete(flow);
+	} else {
 		flow = calloc(1, sizeof(*flow));
 		flow->node.key = &flow->key;
 		flow->sort_node.key = &flow->avg_packets;
 		memcpy(&flow->key, key, sizeof(flow->key));
 		bridger_ewma(&flow->avg_packets, val->packets);
 		avl_insert(&flows, &flow->node);
-	} else {
-		__bridger_flow_delete(flow);
 	}
 
 	flow->fdb_in = fdb_in;
@@ -182,11 +196,9 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	flow->fdb_out = fdb_out;
 	list_add(&flow->fdb_out_list, &fdb_out->flows_out);
 
-	flow->offload.target_port = device_ifindex(fdb_out->dev);
+	flow->offload.target_port = target_port;
 	flow->offload.vlan = out_vlan;
-	flow->offload.redirect_flags = fdb_out->dev->br ? BPF_F_INGRESS : 0;
-	if (!bridge_local_rx && fdb_out->dev->br)
-		flow->offload.target_port = 0;
+	flow->offload.redirect_flags = redirect_flags;
 
 	avl_insert(&sorted_flows, &flow->sort_node);
 
