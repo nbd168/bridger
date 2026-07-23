@@ -5,6 +5,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>
+#include <errno.h>
 #include <glob.h>
 #include <unistd.h>
 
@@ -42,7 +43,11 @@ int bridger_bpf_flow_upload(struct bridger_flow *flow)
 	if (bpf_map_lookup_elem(map_offload, &flow->key, &val) == 0)
 		flow->offload.packets = val.packets;
 
-	return bpf_map_update_elem(map_offload, &flow->key, &flow->offload, BPF_ANY);
+	/* normalise legacy (-1 + errno) and strict (-errno) libbpf returns */
+	if (bpf_map_update_elem(map_offload, &flow->key, &flow->offload, BPF_ANY))
+		return -errno;
+
+	return 0;
 }
 
 void bridger_bpf_flow_update(struct bridger_flow *flow)

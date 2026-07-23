@@ -2,8 +2,10 @@
 /*
  * Copyright (C) 2022 Felix Fietkau <nbd@nbd.name>
  */
+#include <errno.h>
 #include <inttypes.h>
 #include <stdlib.h>
+#include <string.h>
 #include <linux/neighbour.h>
 #include "bridger.h"
 
@@ -72,6 +74,7 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	uint16_t redirect_flags;
 	uint32_t target_port;
 	int out_vlan;
+	int ret;
 
 	if (!memcmp(key->src, key->dest, ETH_ALEN))
 		return;
@@ -202,8 +205,14 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 
 	avl_insert(&sorted_flows, &flow->sort_node);
 
-	while (bridger_bpf_flow_upload(flow)) {
+	while ((ret = bridger_bpf_flow_upload(flow)) != 0) {
 		struct bridger_flow *victim;
+
+		if (ret != -E2BIG) {
+			D("Failed to upload flow: %s\n", strerror(-ret));
+			bridger_flow_delete(flow);
+			return;
+		}
 
 		victim = avl_first_element(&sorted_flows, victim, sort_node);
 		if (victim == flow || victim->avg_packets >= flow->avg_packets) {
