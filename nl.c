@@ -1030,7 +1030,7 @@ bridge_nl_error_cb(struct sockaddr_nl *nla, struct nlmsgerr *err,
 		return NL_SKIP;
 
 	if (!(nlh->nlmsg_flags & NLM_F_ACK_TLVS))
-		return NL_SKIP;
+		return NL_STOP;
 
 	if (!(nlh->nlmsg_flags & NLM_F_CAPPED))
 		ack_len += err->msg.nlmsg_len - sizeof(*nlh);
@@ -1044,7 +1044,7 @@ bridge_nl_error_cb(struct sockaddr_nl *nla, struct nlmsgerr *err,
 
 	D("Netlink error(%d): %s\n", err->error, errstr);
 
-	return NL_SKIP;
+	return NL_STOP;
 }
 
 struct nl_sock *
