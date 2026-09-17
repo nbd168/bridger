@@ -877,6 +877,7 @@ __bridger_nl_flow_offload_add(struct bridger_flow *flow, struct device *dev)
 int bridger_nl_flow_offload_add(struct bridger_flow *flow)
 {
 	struct device *dev;
+	unsigned int i;
 	int ifindex;
 	int ret = -1;
 
@@ -886,10 +887,18 @@ int bridger_nl_flow_offload_add(struct bridger_flow *flow)
 	if (flow->offload_ifindex)
 		bridger_nl_flow_offload_del(flow);
 
-	for (dev = flow->fdb_in->dev; dev; dev = dev->offload_dev) {
+	/*
+	 * A DSA user port cannot redirect to a device behind its conduit.
+	 * Flows between two ports of the same switch are skipped earlier, so
+	 * an offloaded flow always leaves the switch through its conduit.
+	 * Start at the lowest device of the chain and fall back upwards.
+	 */
+	for (i = device_offload_chain_len(flow->fdb_in->dev); i > 0; i--) {
+		dev = device_offload_chain_get(flow->fdb_in->dev, i - 1);
 		ifindex = device_ifindex(dev);
 		ret = __bridger_nl_flow_offload_add(flow, dev);
-		D("Add flow on %s: %s\n", dev->ifname, ret ? strerror(-ret) : "Success");
+		D("Add flow on %s: %s\n", dev->ifname,
+		  ret ? nl_geterror(ret) : "Success");
 		if (!ret)
 			break;
 	}

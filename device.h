@@ -90,6 +90,25 @@ static inline struct bridge *device_get_br(struct device *dev)
 	return dev->br;
 }
 
+static inline unsigned int device_offload_chain_len(struct device *dev)
+{
+	unsigned int len = 0;
+
+	for (; dev; dev = dev->offload_dev)
+		len++;
+
+	return len;
+}
+
+static inline struct device *
+device_offload_chain_get(struct device *dev, unsigned int idx)
+{
+	for (; idx > 0; idx--)
+		dev = dev->offload_dev;
+
+	return dev;
+}
+
 static inline bool
 device_match_phys_switch(struct device *dev1, struct device *dev2)
 {
