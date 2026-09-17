@@ -876,7 +876,8 @@ __bridger_nl_flow_offload_add(struct bridger_flow *flow, struct device *dev)
 
 int bridger_nl_flow_offload_add(struct bridger_flow *flow)
 {
-	struct device *dev;
+	struct device *devs[4], *dev;
+	unsigned int n_devs = 0;
 	int ifindex;
 	int ret = -1;
 
@@ -886,7 +887,22 @@ int bridger_nl_flow_offload_add(struct bridger_flow *flow)
 	if (flow->offload_ifindex)
 		bridger_nl_flow_offload_del(flow);
 
+	/*
+	 * Offload on the outermost device of the chain first. Flows between
+	 * two ports of the same switch are skipped earlier, so an offloaded
+	 * flow always leaves the switch through its conduit, and that is the
+	 * device whose SoC can program it. Asking the switch port first lets
+	 * a driver that cannot program the flow decide the outcome.
+	 */
 	for (dev = flow->fdb_in->dev; dev; dev = dev->offload_dev) {
+		if (n_devs >= ARRAY_SIZE(devs))
+			break;
+
+		devs[n_devs++] = dev;
+	}
+
+	while (n_devs > 0) {
+		dev = devs[--n_devs];
 		ifindex = device_ifindex(dev);
 		ret = __bridger_nl_flow_offload_add(flow, dev);
 		D("Add flow on %s: %s\n", dev->ifname, ret ? strerror(-ret) : "Success");
