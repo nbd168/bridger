@@ -386,8 +386,8 @@ handle_neigh(struct nlmsghdr *nh, bool add)
 
 	if (!add) {
 		f = fdb_get(br, &key);
-		if (f)
-			fdb_delete(br, f);
+		if (f && f->dev == dev)
+			fdb_schedule_delete(br, f);
 		return;
 	}
 
