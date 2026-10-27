@@ -403,17 +403,22 @@ static void __device_update(struct device *dev)
 
 	dev->master = master;
 
-	attach = (dev->master || dev->br) && !bridger_ubus_dev_blacklisted(dev);
-	device_set_attached(dev, attach);
-	bridger_bpf_dev_policy_set(dev);
-	device_set_tx_attached(dev, attach && dev->redirect_dev);
-
+	/*
+	 * Set the offload device first: attaching cleans up the offload
+	 * filters that an earlier instance left on the device and on its
+	 * offload chain, and the chain must be known for that.
+	 */
 	odev = device_get_offload_dev(dev);
 	if (odev != dev->offload_dev)
 		D("Set device %s offload device to %s\n", dev->ifname,
 		  odev ? odev->ifname : "(none)");
 
 	dev->offload_dev = odev;
+
+	attach = (dev->master || dev->br) && !bridger_ubus_dev_blacklisted(dev);
+	device_set_attached(dev, attach);
+	bridger_bpf_dev_policy_set(dev);
+	device_set_tx_attached(dev, attach && dev->redirect_dev);
 }
 
 static void bridger_device_update_cb(struct uloop_timeout *t)
