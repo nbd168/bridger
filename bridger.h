@@ -40,7 +40,11 @@ void bridger_udebug_config(struct udebug_ubus *ctx, struct blob_attr *data,
 
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
-#define BRIDGER_PROG_PATH	"/lib/bpf/bridger-bpf.o"
+#ifndef BRIDGER_BPF_DIR
+#define BRIDGER_BPF_DIR		"/lib/bpf"
+#endif
+
+#define BRIDGER_PROG_PATH	BRIDGER_BPF_DIR "/bridger-bpf.o"
 #define BRIDGER_PIN_PATH	"/sys/fs/bpf/bridger"
 #define BRIDGER_DATA_PATH	"/sys/fs/bpf/bridger_data"
 
