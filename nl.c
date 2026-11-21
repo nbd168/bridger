@@ -643,7 +643,7 @@ static int bridger_refresh_linkinfo(void)
 	return bridger_nl_resync_request(msg);
 }
 
-static int bridger_nl_set_bpf_prog(int ifindex, int fd, bool ingress)
+int bridger_nl_bpf_attach(int ifindex, int fd, unsigned int prio, bool ingress)
 {
 	DECLARE_LIBBPF_OPTS(bpf_tc_hook, hook,
 			    .attach_point = ingress ? BPF_TC_INGRESS : BPF_TC_EGRESS,
@@ -651,7 +651,7 @@ static int bridger_nl_set_bpf_prog(int ifindex, int fd, bool ingress)
 	DECLARE_LIBBPF_OPTS(bpf_tc_opts, attach_ingress,
 			    .flags = BPF_TC_F_REPLACE,
 			    .handle = 1,
-			    .priority = BRIDGER_PRIO_BPF);
+			    .priority = prio);
 
 	bpf_tc_hook_create(&hook);
 	attach_ingress.prog_fd = fd;
@@ -659,14 +659,13 @@ static int bridger_nl_set_bpf_prog(int ifindex, int fd, bool ingress)
 	return bpf_tc_attach(&hook, &attach_ingress);
 }
 
-static void
-bridger_nl_del_filter(struct device *dev, unsigned int prio, bool ingress)
+void bridger_nl_bpf_detach(int ifindex, unsigned int prio, bool ingress)
 {
 	struct tcmsg tcmsg = {
 		.tcm_parent = TC_H_MAKE(TC_H_CLSACT, ingress ? TC_H_MIN_INGRESS :
 						     TC_H_MIN_EGRESS),
 		.tcm_family = AF_UNSPEC,
-		.tcm_ifindex = device_ifindex(dev),
+		.tcm_ifindex = ifindex,
 		.tcm_info = TC_H_MAKE(prio << 16, 0),
 	};
 	struct nl_msg *msg;
@@ -686,7 +685,7 @@ bridger_nl_device_clear_offload(struct device *dev)
 	int i;
 
 	for (i = BRIDGER_PRIO_OFFLOAD_START; i <= BRIDGER_PRIO_OFFLOAD_END; i++)
-		bridger_nl_del_filter(dev, i, true);
+		bridger_nl_bpf_detach(device_ifindex(dev), i, true);
 }
 
 static void
@@ -983,7 +982,8 @@ int bridger_nl_device_attach(struct device *dev, bool tx)
 
 	bridger_nl_device_detach(dev, tx);
 
-	ret = bridger_nl_set_bpf_prog(device_ifindex(dev), fd, !tx && !dev->br);
+	ret = bridger_nl_bpf_attach(device_ifindex(dev), fd, BRIDGER_PRIO_BPF,
+				    !tx && !dev->br);
 	if (ret)
 		return ret;
 
@@ -992,7 +992,8 @@ int bridger_nl_device_attach(struct device *dev, bool tx)
 
 void bridger_nl_device_detach(struct device *dev, bool tx)
 {
-	bridger_nl_del_filter(dev, BRIDGER_PRIO_BPF, !tx && !dev->br);
+	bridger_nl_bpf_detach(device_ifindex(dev), BRIDGER_PRIO_BPF,
+			      !tx && !dev->br);
 	if (tx)
 		return;
 

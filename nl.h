@@ -11,6 +11,9 @@ void bridger_nl_request_resync(void);
 int bridger_nl_device_attach(struct device *dev, bool tx);
 void bridger_nl_device_detach(struct device *dev, bool tx);
 
+int bridger_nl_bpf_attach(int ifindex, int fd, unsigned int prio, bool ingress);
+void bridger_nl_bpf_detach(int ifindex, unsigned int prio, bool ingress);
+
 int bridger_nl_flow_offload_add(struct bridger_flow *flow);
 void bridger_nl_flow_offload_update(struct bridger_flow *flow);
 void bridger_nl_flow_offload_del(struct bridger_flow *flow);
