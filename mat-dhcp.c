@@ -94,36 +94,15 @@ struct mat_dhcp_xid {
 static const uint8_t ip_broadcast[4] = { 0xff, 0xff, 0xff, 0xff };
 static const uint8_t ip_unspec[4];
 
-static uint32_t csum_add(uint32_t sum, const void *data, size_t len)
-{
-	const uint8_t *p = data;
-
-	for (; len > 1; len -= 2, p += 2)
-		sum += (p[0] << 8) | p[1];
-
-	if (len)
-		sum += p[0] << 8;
-
-	return sum;
-}
-
-static uint16_t csum_fold(uint32_t sum)
-{
-	while (sum >> 16)
-		sum = (sum & 0xffff) + (sum >> 16);
-
-	return htons(~sum);
-}
-
 static uint16_t mat_udp_csum(struct mat_ip_hdr *ip, struct mat_udp_hdr *udp)
 {
 	uint16_t len = ntohs(udp->len);
 	uint32_t sum = IPPROTO_UDP + len;
 	uint16_t check;
 
-	sum = csum_add(sum, ip->saddr, 8);
-	sum = csum_add(sum, udp, len);
-	check = csum_fold(sum);
+	sum = mat_csum_add(sum, ip->saddr, 8);
+	sum = mat_csum_add(sum, udp, len);
+	check = mat_csum_fold(sum);
 
 	return check ? check : 0xffff;
 }
@@ -136,10 +115,10 @@ static bool mat_udp_csum_valid(struct mat_ip_hdr *ip, struct mat_udp_hdr *udp)
 	if (!udp->check)
 		return true;
 
-	sum = csum_add(sum, ip->saddr, 8);
-	sum = csum_add(sum, udp, len);
+	sum = mat_csum_add(sum, ip->saddr, 8);
+	sum = mat_csum_add(sum, udp, len);
 
-	return !csum_fold(sum);
+	return !mat_csum_fold(sum);
 }
 
 static void mat_dhcp_csum_update(struct mat_dhcp_pkt *pkt)
@@ -374,7 +353,8 @@ static size_t mat_dhcp_add_client_id(struct mat_dhcp_pkt *pkt, uint8_t *frame,
 	ip_len = ntohs(pkt->ip->tot_len) + grow;
 	pkt->ip->tot_len = htons(ip_len);
 	pkt->ip->check = 0;
-	pkt->ip->check = csum_fold(csum_add(0, pkt->ip, (pkt->ip->ver_ihl & 0xf) * 4));
+	pkt->ip->check = mat_csum_fold(mat_csum_add(0, pkt->ip,
+						    (pkt->ip->ver_ihl & 0xf) * 4));
 
 	return sizeof(struct ether_header) + ip_len;
 }

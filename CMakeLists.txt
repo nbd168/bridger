@@ -35,7 +35,8 @@ ENDIF()
 
 IF (MAT_SUPPORT)
   ADD_DEFINITIONS(-DMAT_SUPPORT)
-  SET(SOURCES ${SOURCES} mat.c mat-arp.c mat-dhcp.c mat-bpf.c)
+  SET(SOURCES ${SOURCES} mat.c mat-arp.c mat-dhcp.c mat-nd.c mat-dhcp6.c
+      mat-bpf.c)
 ENDIF()
 
 IF (DEFINED BPF_DIR)

@@ -93,6 +93,27 @@ static struct mat_instance *mat_instance_get(const char *sta)
 	return NULL;
 }
 
+uint32_t mat_csum_add(uint32_t sum, const void *data, size_t len)
+{
+	const uint8_t *p = data;
+
+	for (; len > 1; len -= 2, p += 2)
+		sum += (p[0] << 8) | p[1];
+
+	if (len)
+		sum += p[0] << 8;
+
+	return sum;
+}
+
+uint16_t mat_csum_fold(uint32_t sum)
+{
+	while (sum >> 16)
+		sum = (sum & 0xffff) + (sum >> 16);
+
+	return htons(~sum);
+}
+
 void mat_send_up(struct mat_instance *inst, uint8_t *frame, size_t len)
 {
 	memcpy(frame + ETH_ALEN, inst->sta_mac, ETH_ALEN);
@@ -118,12 +139,95 @@ static void mat_probe(struct mat_instance *inst, struct mat_binding *b)
 {
 	if (mat_addr_is_ipv4(b->addr))
 		mat_arp_request(inst, b->addr, b->mac);
+	else
+		mat_nd_request(inst, b->addr, b->mac);
 }
 
 static void mat_resolve(struct mat_instance *inst, const uint8_t *addr)
 {
 	if (mat_addr_is_ipv4(addr))
 		mat_arp_request(inst, addr, NULL);
+	else
+		mat_nd_request(inst, addr, NULL);
+}
+
+static bool mat_prefix_match(const struct mat_prefix *p, const uint8_t *addr)
+{
+	unsigned int bytes = p->len / 8;
+	unsigned int bits = p->len % 8;
+
+	if (memcmp(p->addr, addr, bytes))
+		return false;
+
+	return !bits || !((p->addr[bytes] ^ addr[bytes]) & (0xff00 >> bits));
+}
+
+static struct mat_prefix *
+mat_prefix_get(struct mat_instance *inst, const uint8_t *addr)
+{
+	struct mat_prefix *p;
+
+	list_for_each_entry(p, &inst->prefixes, list)
+		if (mat_prefix_match(p, addr))
+			return p;
+
+	return NULL;
+}
+
+static void mat_prefix_free(struct mat_instance *inst, struct mat_prefix *p)
+{
+	D("%s: delete prefix %s/%d\n", inst->sta_name, mat_addr_str(p->addr), p->len);
+	mat_bpf_prefix_delete(inst, p);
+	list_del(&p->list);
+	inst->n_prefixes--;
+	free(p);
+}
+
+static void mat_prefix_expire(struct mat_instance *inst, bool all)
+{
+	struct mat_prefix *p, *tmp;
+	uint64_t now = mat_now();
+
+	list_for_each_entry_safe(p, tmp, &inst->prefixes, list)
+		if (all || now >= p->expire)
+			mat_prefix_free(inst, p);
+}
+
+void mat_prefix_update(struct mat_instance *inst, const uint8_t *addr,
+		       uint8_t len, const uint8_t *mac, uint64_t lifetime)
+{
+	struct mat_prefix *p;
+
+	if (!len || len > 8 * MAT_ADDR_LEN)
+		return;
+
+	list_for_each_entry(p, &inst->prefixes, list)
+		if (p->len == len && mat_prefix_match(p, addr))
+			goto found;
+
+	if (!lifetime || inst->n_prefixes >= MAT_PREFIX_MAX)
+		return;
+
+	p = calloc(1, sizeof(*p));
+	if (!p)
+		return;
+
+	memcpy(p->addr, addr, MAT_ADDR_LEN);
+	p->len = len;
+	list_add_tail(&p->list, &inst->prefixes);
+	inst->n_prefixes++;
+
+found:
+	if (!lifetime) {
+		mat_prefix_free(inst, p);
+		return;
+	}
+
+	D("%s: prefix %s/%d to %s\n", inst->sta_name, mat_addr_str(p->addr),
+	  p->len, format_macaddr(mac));
+	memcpy(p->mac, mac, ETH_ALEN);
+	p->expire = mat_now() + lifetime;
+	mat_bpf_prefix_set(inst, p);
 }
 
 static void mat_queue_free(struct mat_instance *inst, struct mat_queued *q)
@@ -434,6 +538,20 @@ void mat_binding_update(struct mat_instance *inst, const uint8_t *addr,
 	memcpy(b->claim_mac, mac, ETH_ALEN);
 }
 
+void mat_binding_update_ipv6(struct mat_instance *inst, const uint8_t *addr,
+			     const uint8_t *mac, enum mat_source source,
+			     uint64_t lifetime)
+{
+	static const uint8_t unspec[MAT_ADDR_LEN];
+
+	/* an IPv4-mapped address has the key of an IPv4 binding */
+	if (mat_addr_is_ipv4(addr) || addr[0] == 0xff ||
+	    !memcmp(addr, unspec, MAT_ADDR_LEN))
+		return;
+
+	mat_binding_update(inst, addr, mac, source, lifetime);
+}
+
 void mat_learn_event(unsigned int sta_ifindex, const uint8_t *addr,
 		     const uint8_t *mac)
 {
@@ -443,7 +561,9 @@ void mat_learn_event(unsigned int sta_ifindex, const uint8_t *addr,
 		if (!inst->active || inst->sta_ifindex != sta_ifindex)
 			continue;
 
-		mat_binding_update(inst, addr, mac, MAT_SRC_LEARN, 0);
+		/* a delegated prefix covers the hosts behind its router */
+		if (!mat_prefix_get(inst, addr))
+			mat_binding_update(inst, addr, mac, MAT_SRC_LEARN, 0);
 		return;
 	}
 }
@@ -505,9 +625,39 @@ static void mat_timer_cb(struct uloop_timeout *t)
 	if (++inst->tick % MAT_SCAN_INTERVAL == 0) {
 		mat_bindings_scan(inst);
 		mat_upstream_expire(inst, false);
+		mat_prefix_expire(inst, false);
 	}
 
 	uloop_timeout_set(t, 1000);
+}
+
+static void mat_handle_ipv6(struct mat_instance *inst, uint8_t *frame,
+			    size_t len, bool down)
+{
+	if (len < sizeof(struct ether_header) + 40)
+		goto drop;
+
+	if (mat_nd_match(frame, len)) {
+		if (down)
+			mat_nd_down(inst, frame, len);
+		else
+			mat_nd_up(inst, frame, len);
+		return;
+	}
+
+	if (!down)
+		goto drop;
+
+	if (mat_dhcp6_match(frame, len)) {
+		mat_dhcp6_down(inst, frame, len);
+		return;
+	}
+
+	mat_forward_down(inst, frame + sizeof(struct ether_header) + 24, frame, len);
+	return;
+
+drop:
+	inst->dropped++;
 }
 
 static void mat_handle_ipv4(struct mat_instance *inst, uint8_t *frame,
@@ -576,6 +726,9 @@ static void mat_handle_frame(struct mat_instance *inst, uint8_t *frame, size_t l
 		return;
 	case ETH_P_IP:
 		mat_handle_ipv4(inst, frame, len, down);
+		return;
+	case ETH_P_IPV6:
+		mat_handle_ipv6(inst, frame, len, down);
 		return;
 	default:
 		break;
@@ -727,6 +880,7 @@ static void mat_instance_flush(struct mat_instance *inst)
 		mat_binding_delete(inst, b);
 
 	mat_upstream_expire(inst, true);
+	mat_prefix_expire(inst, true);
 	mat_arp_probes_expire(inst, true);
 	mat_dhcp_xids_expire(inst, true);
 	mat_queue_expire(inst, true);
@@ -928,6 +1082,7 @@ int bridger_mat_set(const char *sta, const char *port, const char *bridge,
 	INIT_LIST_HEAD(&inst->arp_probes);
 	INIT_LIST_HEAD(&inst->queue);
 	INIT_LIST_HEAD(&inst->dhcp_xids);
+	INIT_LIST_HEAD(&inst->prefixes);
 	inst->retry.cb = mat_retry_cb;
 	list_add_tail(&inst->list, &instances);
 
@@ -968,6 +1123,23 @@ static void mat_status_bindings(struct mat_instance *inst, struct blob_buf *b)
 	blobmsg_close_array(b, c);
 }
 
+static void mat_status_prefixes(struct mat_instance *inst, struct blob_buf *b)
+{
+	struct mat_prefix *p;
+	uint64_t now = mat_now();
+	void *c, *e;
+
+	c = blobmsg_open_array(b, "prefixes");
+	list_for_each_entry(p, &inst->prefixes, list) {
+		e = blobmsg_open_table(b, NULL);
+		blobmsg_printf(b, "prefix", "%s/%d", mat_addr_str(p->addr), p->len);
+		blobmsg_add_string(b, "mac", format_macaddr(p->mac));
+		blobmsg_add_u32(b, "expires", mat_time_diff(p->expire, now) / 1000);
+		blobmsg_close_table(b, e);
+	}
+	blobmsg_close_array(b, c);
+}
+
 void bridger_mat_status(struct blob_buf *b)
 {
 	struct mat_instance *inst;
@@ -988,8 +1160,10 @@ void bridger_mat_status(struct blob_buf *b)
 		blobmsg_add_u64(b, "tx_down", inst->tx_down);
 		blobmsg_add_u64(b, "missed", inst->missed);
 		blobmsg_add_u64(b, "dropped", inst->dropped);
-		if (inst->active)
+		if (inst->active) {
 			mat_status_bindings(inst, b);
+			mat_status_prefixes(inst, b);
+		}
 		blobmsg_close_table(b, e);
 	}
 	blobmsg_close_table(b, c);

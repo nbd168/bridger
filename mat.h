@@ -25,6 +25,7 @@
 #define MAT_QUEUE_MAX		64
 #define MAT_UPSTREAM_MAX	256
 #define MAT_BIND_MAX		(MAT_MAX_BINDINGS / MAT_INSTANCE_MAX)
+#define MAT_PREFIX_MAX		(MAT_MAX_PREFIXES / MAT_INSTANCE_MAX)
 #define MAT_BIND_MAC_MAX	16
 
 enum mat_source {
@@ -50,6 +51,14 @@ struct mat_binding {
 	uint64_t expire;
 	uint64_t last_seen;
 	uint64_t probe_time;
+};
+
+struct mat_prefix {
+	struct list_head list;
+	uint8_t addr[MAT_ADDR_LEN];
+	uint8_t len;
+	uint8_t mac[ETH_ALEN];
+	uint64_t expire;
 };
 
 struct mat_instance {
@@ -80,7 +89,9 @@ struct mat_instance {
 	struct list_head arp_probes;
 	struct list_head queue;
 	struct list_head dhcp_xids;
+	struct list_head prefixes;
 	unsigned int queue_len;
+	unsigned int n_prefixes;
 	unsigned int n_arp_probes;
 	unsigned int n_dhcp_xids;
 
@@ -152,12 +163,35 @@ struct mat_binding *mat_binding_get(struct mat_instance *inst, const uint8_t *ad
 void mat_binding_update(struct mat_instance *inst, const uint8_t *addr,
 			const uint8_t *mac, enum mat_source source,
 			uint64_t lifetime);
+void mat_binding_update_ipv6(struct mat_instance *inst, const uint8_t *addr,
+			     const uint8_t *mac, enum mat_source source,
+			     uint64_t lifetime);
 void mat_binding_delete(struct mat_instance *inst, struct mat_binding *b);
 void mat_binding_delete_dhcp(struct mat_instance *inst, const uint8_t *mac);
 void mat_upstream_seen(struct mat_instance *inst, const uint8_t *addr);
 
+void mat_prefix_update(struct mat_instance *inst, const uint8_t *addr,
+		       uint8_t len, const uint8_t *mac, uint64_t lifetime);
+
+uint32_t mat_csum_add(uint32_t sum, const void *data, size_t len);
+uint16_t mat_csum_fold(uint32_t sum);
+
 void mat_send_up(struct mat_instance *inst, uint8_t *frame, size_t len);
 void mat_send_down(struct mat_instance *inst, const uint8_t *frame, size_t len);
+
+uint8_t *mat_ipv6_payload(uint8_t *frame, size_t len, uint8_t *nexthdr,
+			  size_t *payload_len);
+bool mat_nd_match(uint8_t *frame, size_t len);
+void mat_nd_up(struct mat_instance *inst, uint8_t *frame, size_t len);
+void mat_nd_down(struct mat_instance *inst, uint8_t *frame, size_t len);
+void mat_nd_request(struct mat_instance *inst, const uint8_t *addr,
+		    const uint8_t *dest);
+
+bool mat_dhcp6_match(uint8_t *frame, size_t len);
+void mat_dhcp6_down(struct mat_instance *inst, uint8_t *frame, size_t len);
+
+void mat_bpf_prefix_set(struct mat_instance *inst, struct mat_prefix *p);
+void mat_bpf_prefix_delete(struct mat_instance *inst, struct mat_prefix *p);
 
 void mat_arp_up(struct mat_instance *inst, uint8_t *frame, size_t len);
 void mat_arp_down(struct mat_instance *inst, uint8_t *frame, size_t len);

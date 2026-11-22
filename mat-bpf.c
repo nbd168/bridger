@@ -13,6 +13,7 @@ static struct ring_buffer *events;
 static struct uloop_fd events_fd;
 static int map_dev = -1;
 static int map_bind = -1;
+static int map_prefix = -1;
 static int prog_up_fd = -1;
 static int prog_down_fd = -1;
 static int prog_sta_out_fd = -1;
@@ -75,11 +76,12 @@ static int mat_bpf_load(void)
 
 	map_dev = bpf_object__find_map_fd_by_name(obj, "mat_dev");
 	map_bind = bpf_object__find_map_fd_by_name(obj, "mat_bind");
+	map_prefix = bpf_object__find_map_fd_by_name(obj, "mat_prefix");
 	map_events = bpf_object__find_map_fd_by_name(obj, "mat_events");
 	prog_up_fd = mat_bpf_prog_fd("mat_up");
 	prog_down_fd = mat_bpf_prog_fd("mat_down");
 	prog_sta_out_fd = mat_bpf_prog_fd("mat_sta_out");
-	if (map_dev < 0 || map_bind < 0 || map_events < 0 ||
+	if (map_dev < 0 || map_bind < 0 || map_prefix < 0 || map_events < 0 ||
 	    prog_up_fd < 0 || prog_down_fd < 0 || prog_sta_out_fd < 0)
 		goto error;
 
@@ -143,6 +145,33 @@ static void mat_bpf_detach_filters(struct mat_instance *inst)
 	bridger_nl_bpf_detach(inst->sta_ifindex, BRIDGER_PRIO_MAT, true);
 	bridger_nl_bpf_detach(inst->sta_ifindex, BRIDGER_PRIO_MAT, false);
 	bridger_nl_bpf_detach(inst->port_ifindex, BRIDGER_PRIO_MAT, false);
+}
+
+static void mat_bpf_prefix_key(struct mat_instance *inst, struct mat_prefix *p,
+			       struct mat_prefix_key *key)
+{
+	memset(key, 0, sizeof(*key));
+	key->prefixlen = 8 * sizeof(key->sta_ifindex) + p->len;
+	key->sta_ifindex = inst->sta_ifindex;
+	memcpy(key->addr, p->addr, sizeof(key->addr));
+}
+
+void mat_bpf_prefix_set(struct mat_instance *inst, struct mat_prefix *p)
+{
+	struct mat_prefix_key key;
+	struct mat_bind val = {};
+
+	mat_bpf_prefix_key(inst, p, &key);
+	memcpy(val.mac, p->mac, ETH_ALEN);
+	bpf_map_update_elem(map_prefix, &key, &val, BPF_ANY);
+}
+
+void mat_bpf_prefix_delete(struct mat_instance *inst, struct mat_prefix *p)
+{
+	struct mat_prefix_key key;
+
+	mat_bpf_prefix_key(inst, p, &key);
+	bpf_map_delete_elem(map_prefix, &key);
 }
 
 int mat_bpf_attach(struct mat_instance *inst)

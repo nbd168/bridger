@@ -12,12 +12,19 @@
 #define MAT_MAX_BINDINGS	8192
 #define MAT_EVENT_SLOTS		256
 #define MAT_EVENT_INTERVAL_NS	1000000000ULL
+#define MAT_MAX_PREFIXES	128
 
 struct mat_dev {
 	uint32_t sta_ifindex;
 	uint32_t port_ifindex;
 	uint8_t sta_mac[6];
 	uint8_t pad[2];
+};
+
+struct mat_prefix_key {
+	uint32_t prefixlen;
+	uint32_t sta_ifindex;
+	uint8_t addr[16];
 };
 
 struct mat_bind_key {

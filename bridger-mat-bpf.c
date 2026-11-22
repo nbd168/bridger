@@ -54,6 +54,15 @@ struct {
 } mat_bind SEC(".maps");
 
 struct {
+	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
+	__uint(pinning, 1);
+	__type(key, struct mat_prefix_key);
+	__type(value, struct mat_bind);
+	__uint(max_entries, MAT_MAX_PREFIXES);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} mat_prefix SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(pinning, 1);
 	__type(key, struct mat_bind_key);
@@ -480,6 +489,11 @@ int mat_down(struct __sk_buff *skb)
 		return TC_ACT_UNSPEC;
 	case MAT_CLASS_DROP:
 		return TC_ACT_SHOT;
+	case MAT_CLASS_SERVER:
+		/* user space reads the leases of a DHCPv6 Reply */
+		if (p.proto == bpf_htons(ETH_P_IPV6))
+			goto bounce;
+		break;
 	case MAT_CLASS_REPORT:
 		/*
 		 * A report from upstream stops the reports of the LAN hosts
@@ -509,6 +523,16 @@ int mat_down(struct __sk_buff *skb)
 	}
 
 	bind = bpf_map_lookup_elem(&mat_bind, &p.dst_key);
+	if (!bind && p.proto == bpf_htons(ETH_P_IPV6)) {
+		struct mat_prefix_key pkey = {
+			.prefixlen = 8 * (sizeof(pkey) - sizeof(pkey.prefixlen)),
+			.sta_ifindex = p.dst_key.sta_ifindex,
+		};
+
+		memcpy(pkey.addr, p.dst_key.addr, sizeof(pkey.addr));
+		bind = bpf_map_lookup_elem(&mat_prefix, &pkey);
+	}
+
 	if (!bind)
 		goto bounce;
 
