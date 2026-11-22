@@ -12,6 +12,7 @@
 #include <uapi/linux/in6.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+#include "bridger-bpf-maps.h"
 #include "bridger-mat-bpf.h"
 
 #define MAT_PULL_LEN		128
@@ -91,6 +92,7 @@ struct mat_pkt {
 	__u8 src[ETH_ALEN];
 	__be16 proto;
 	__u8 class;
+	__u8 icmp6;
 	__u8 dst_group;
 	__u8 src_unspec;
 	struct mat_bind_key src_key;
@@ -262,6 +264,7 @@ mat_parse_ipv6(struct __sk_buff *skb, struct mat_pkt *p)
 	if (nexthdr != IPPROTO_ICMPV6)
 		return 0;
 
+	p->icmp6 = 1;
 	if (bpf_skb_load_bytes(skb, offset, &type, sizeof(type)))
 		return 0;
 
@@ -377,6 +380,38 @@ static __always_inline int
 mat_set_source(struct __sk_buff *skb, const __u8 *mac)
 {
 	return bpf_skb_store_bytes(skb, ETH_ALEN, mac, ETH_ALEN, 0);
+}
+
+/*
+ * A flow from the proxy port to a LAN port takes the frame there directly.
+ * Without one, the frame enters the bridge through the proxy port, where
+ * bridger_input() records it as a pending flow.
+ */
+static __always_inline int
+mat_redirect_down(struct __sk_buff *skb, struct mat_pkt *p, const __u8 *mac,
+		  __u32 port_ifindex)
+{
+	struct bridger_offload_flow *flow;
+	struct bridger_flow_key key = {};
+
+	/* bridger_input() keeps ICMPv6 in the bridge as well */
+	if (skb->vlan_present || p->icmp6)
+		goto bridge;
+
+	memcpy(key.dest, mac, ETH_ALEN);
+	memcpy(key.src, p->src, ETH_ALEN);
+	key.ifindex = port_ifindex;
+
+	flow = bpf_map_lookup_elem(&offload_flows, &key);
+	if (!flow || !flow->target_port || flow->vlan)
+		goto bridge;
+
+	flow->packets++;
+
+	return bpf_redirect(flow->target_port, flow->redirect_flags);
+
+bridge:
+	return bpf_redirect(port_ifindex, BPF_F_INGRESS);
 }
 
 SEC("tc")
@@ -549,7 +584,7 @@ int mat_down(struct __sk_buff *skb)
 	if (mat_set_dest(skb, mac))
 		return TC_ACT_SHOT;
 
-	return bpf_redirect(port_ifindex, BPF_F_INGRESS);
+	return mat_redirect_down(skb, &p, mac, port_ifindex);
 
 bounce:
 	if (bpf_skb_vlan_push(skb, bpf_htons(ETH_P_8021AD), MAT_TAG_TCI))

@@ -10,7 +10,7 @@
 #include <uapi/linux/in6.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
-#include "bridger-bpf.h"
+#include "bridger-bpf-maps.h"
 
 #ifndef ETH_P_CFM
 #define ETH_P_CFM	0x8902
@@ -23,15 +23,6 @@ struct {
 	__type(value, struct bridger_pending_flow);
 	__uint(max_entries, BRIDGER_PENDING_FLOWS);
 } pending_flows SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(pinning, 1);
-	__type(key, struct bridger_flow_key);
-	__type(value, struct bridger_offload_flow);
-	__uint(max_entries, BRIDGER_OFFLOAD_FLOWS);
-	__uint(map_flags, BPF_F_NO_PREALLOC);
-} offload_flows SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
