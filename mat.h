@@ -95,6 +95,12 @@ struct mat_instance {
 	unsigned int n_arp_probes;
 	unsigned int n_dhcp_xids;
 
+	bool blocked;
+	uint64_t loop_id;
+	uint64_t loop_foreign_id;
+	uint64_t loop_foreign_time;
+	uint64_t loop_time;
+
 	uint64_t rx_up;
 	uint64_t rx_down;
 	uint64_t tx_up;
@@ -176,6 +182,8 @@ void mat_prefix_update(struct mat_instance *inst, const uint8_t *addr,
 uint32_t mat_csum_add(uint32_t sum, const void *data, size_t len);
 uint16_t mat_csum_fold(uint32_t sum);
 
+void mat_tx_up(struct mat_instance *inst, uint8_t *frame, size_t len);
+void mat_tx_down(struct mat_instance *inst, const uint8_t *frame, size_t len);
 void mat_send_up(struct mat_instance *inst, uint8_t *frame, size_t len);
 void mat_send_down(struct mat_instance *inst, const uint8_t *frame, size_t len);
 
@@ -190,6 +198,13 @@ void mat_nd_request(struct mat_instance *inst, const uint8_t *addr,
 bool mat_dhcp6_match(uint8_t *frame, size_t len);
 void mat_dhcp6_down(struct mat_instance *inst, uint8_t *frame, size_t len);
 
+void mat_loop_init(struct mat_instance *inst);
+void mat_loop_probe(struct mat_instance *inst);
+void mat_loop_tick(struct mat_instance *inst);
+void mat_loop_frame(struct mat_instance *inst, uint8_t *frame, size_t len,
+		    bool down);
+
+int mat_bpf_dev_set(struct mat_instance *inst);
 void mat_bpf_prefix_set(struct mat_instance *inst, struct mat_prefix *p);
 void mat_bpf_prefix_delete(struct mat_instance *inst, struct mat_prefix *p);
 

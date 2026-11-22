@@ -14,11 +14,14 @@
 #define MAT_EVENT_INTERVAL_NS	1000000000ULL
 #define MAT_MAX_PREFIXES	128
 
+#define MAT_DEV_BLOCKED		(1 << 0)
+
 struct mat_dev {
 	uint32_t sta_ifindex;
 	uint32_t port_ifindex;
 	uint8_t sta_mac[6];
-	uint8_t pad[2];
+	uint8_t flags;
+	uint8_t pad;
 };
 
 struct mat_prefix_key {

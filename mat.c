@@ -114,7 +114,7 @@ uint16_t mat_csum_fold(uint32_t sum)
 	return htons(~sum);
 }
 
-void mat_send_up(struct mat_instance *inst, uint8_t *frame, size_t len)
+void mat_tx_up(struct mat_instance *inst, uint8_t *frame, size_t len)
 {
 	memcpy(frame + ETH_ALEN, inst->sta_mac, ETH_ALEN);
 	if (send(inst->sta_sock, frame, len, 0) < 0) {
@@ -125,7 +125,7 @@ void mat_send_up(struct mat_instance *inst, uint8_t *frame, size_t len)
 	inst->tx_up++;
 }
 
-void mat_send_down(struct mat_instance *inst, const uint8_t *frame, size_t len)
+void mat_tx_down(struct mat_instance *inst, const uint8_t *frame, size_t len)
 {
 	if (write(inst->tap.fd, frame, len) < 0) {
 		inst->dropped++;
@@ -133,6 +133,26 @@ void mat_send_down(struct mat_instance *inst, const uint8_t *frame, size_t len)
 	}
 
 	inst->tx_down++;
+}
+
+void mat_send_up(struct mat_instance *inst, uint8_t *frame, size_t len)
+{
+	if (inst->blocked) {
+		inst->dropped++;
+		return;
+	}
+
+	mat_tx_up(inst, frame, len);
+}
+
+void mat_send_down(struct mat_instance *inst, const uint8_t *frame, size_t len)
+{
+	if (inst->blocked) {
+		inst->dropped++;
+		return;
+	}
+
+	mat_tx_down(inst, frame, len);
 }
 
 static void mat_probe(struct mat_instance *inst, struct mat_binding *b)
@@ -628,6 +648,7 @@ static void mat_timer_cb(struct uloop_timeout *t)
 		mat_prefix_expire(inst, false);
 	}
 
+	mat_loop_tick(inst);
 	uloop_timeout_set(t, 1000);
 }
 
@@ -708,14 +729,23 @@ static void mat_handle_frame(struct mat_instance *inst, uint8_t *frame, size_t l
 	}
 
 	eth = (struct ether_header *)frame;
-	if (down) {
+	if (down)
 		inst->rx_down++;
-	} else {
+	else
 		inst->rx_up++;
-		if ((eth->ether_shost[0] & 1) ||
-		    !memcmp(eth->ether_shost, inst->sta_mac, ETH_ALEN))
-			goto drop;
+
+	/* a probe that comes back through a loop has the station's address */
+	if (eth->ether_type == htons(MAT_ETH_P_PROBE)) {
+		mat_loop_frame(inst, frame, len, down);
+		return;
 	}
+
+	if (inst->blocked)
+		goto drop;
+
+	if (!down && ((eth->ether_shost[0] & 1) ||
+		      !memcmp(eth->ether_shost, inst->sta_mac, ETH_ALEN)))
+		goto drop;
 
 	switch (ntohs(eth->ether_type)) {
 	case ETH_P_ARP:
@@ -899,6 +929,7 @@ static void mat_instance_stop(struct mat_instance *inst)
 
 	mat_instance_flush(inst);
 	mat_bpf_detach(inst);
+	inst->blocked = false;
 	if (!inst->sta_ipv6_disabled)
 		mat_ipv6_disable(inst->sta_name, false);
 
@@ -928,6 +959,7 @@ static void mat_instance_start(struct mat_instance *inst, struct device *dev)
 		goto close_tap;
 	}
 
+	mat_loop_init(inst);
 	if (mat_bpf_attach(inst))
 		goto close_sta;
 
@@ -939,6 +971,7 @@ static void mat_instance_start(struct mat_instance *inst, struct device *dev)
 	uloop_fd_add(&inst->tap, ULOOP_READ);
 	inst->timer.cb = mat_timer_cb;
 	uloop_timeout_set(&inst->timer, 1000);
+	mat_loop_probe(inst);
 	return;
 
 close_sta:
@@ -1154,6 +1187,7 @@ void bridger_mat_status(struct blob_buf *b)
 		blobmsg_add_string(b, "dhcp_mode",
 				   inst->dhcp_mode == MAT_DHCP_CHADDR ? "chaddr" : "broadcast");
 		blobmsg_add_u8(b, "active", inst->active);
+		blobmsg_add_u8(b, "loop", inst->blocked);
 		blobmsg_add_u64(b, "rx_up", inst->rx_up);
 		blobmsg_add_u64(b, "rx_down", inst->rx_down);
 		blobmsg_add_u64(b, "tx_up", inst->tx_up);

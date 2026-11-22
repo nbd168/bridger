@@ -413,9 +413,14 @@ int mat_up(struct __sk_buff *skb)
 	sta_ifindex = dev->sta_ifindex;
 	port_ifindex = dev->port_ifindex;
 
+	if (p.class == MAT_CLASS_PROBE)
+		return TC_ACT_UNSPEC;
+
+	if (dev->flags & MAT_DEV_BLOCKED)
+		return TC_ACT_SHOT;
+
 	switch (p.class) {
 	case MAT_CLASS_CONTROL:
-	case MAT_CLASS_PROBE:
 		return TC_ACT_UNSPEC;
 	case MAT_CLASS_DATA:
 	case MAT_CLASS_REPORT:
@@ -484,9 +489,17 @@ int mat_down(struct __sk_buff *skb)
 
 	port_ifindex = dev->port_ifindex;
 
-	switch (p.class) {
-	case MAT_CLASS_OTHER:
+	if (p.class == MAT_CLASS_PROBE)
+		goto bounce;
+
+	/* the station's own stack needs its EAPOL frames at any time */
+	if (p.class == MAT_CLASS_OTHER)
 		return TC_ACT_UNSPEC;
+
+	if (dev->flags & MAT_DEV_BLOCKED)
+		return TC_ACT_SHOT;
+
+	switch (p.class) {
 	case MAT_CLASS_DROP:
 		return TC_ACT_SHOT;
 	case MAT_CLASS_SERVER:
@@ -503,10 +516,6 @@ int mat_down(struct __sk_buff *skb)
 		return TC_ACT_SHOT;
 	case MAT_CLASS_CONTROL:
 		goto bounce;
-	case MAT_CLASS_PROBE:
-		if (!group)
-			return TC_ACT_SHOT;
-		break;
 	default:
 		break;
 	}

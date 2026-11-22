@@ -174,19 +174,28 @@ void mat_bpf_prefix_delete(struct mat_instance *inst, struct mat_prefix *p)
 	bpf_map_delete_elem(map_prefix, &key);
 }
 
-int mat_bpf_attach(struct mat_instance *inst)
+int mat_bpf_dev_set(struct mat_instance *inst)
 {
 	struct mat_dev dev = {
 		.sta_ifindex = inst->sta_ifindex,
 		.port_ifindex = inst->port_ifindex,
+		.flags = inst->blocked ? MAT_DEV_BLOCKED : 0,
 	};
-
-	if (mat_bpf_load())
-		return -1;
 
 	memcpy(dev.sta_mac, inst->sta_mac, ETH_ALEN);
 	if (bpf_map_update_elem(map_dev, &inst->sta_ifindex, &dev, BPF_ANY) ||
 	    bpf_map_update_elem(map_dev, &inst->port_ifindex, &dev, BPF_ANY))
+		return -1;
+
+	return 0;
+}
+
+int mat_bpf_attach(struct mat_instance *inst)
+{
+	if (mat_bpf_load())
+		return -1;
+
+	if (mat_bpf_dev_set(inst))
 		goto error;
 
 	if (bridger_nl_bpf_attach(inst->sta_ifindex, prog_down_fd, BRIDGER_PRIO_MAT, true) ||
