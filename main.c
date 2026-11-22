@@ -117,6 +117,7 @@ int main(int argc, char **argv)
 	uloop_run();
 
 	bridger_ubus_stop();
+	bridger_mat_stop();
 	bridger_device_stop();
 
 	uloop_done();

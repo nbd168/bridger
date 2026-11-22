@@ -99,14 +99,61 @@ bridger_set_blacklist(struct ubus_context *ctx, struct ubus_object *obj,
 }
 
 enum {
+	BRIDGER_MAT_PORT,
+	BRIDGER_MAT_BRIDGE,
+	BRIDGER_MAT_DHCP_MODE,
+	__BRIDGER_MAT_MAX,
+};
+
+static const struct blobmsg_policy mat_policy[__BRIDGER_MAT_MAX] = {
+	[BRIDGER_MAT_PORT] = { "port", BLOBMSG_TYPE_STRING },
+	[BRIDGER_MAT_BRIDGE] = { "bridge", BLOBMSG_TYPE_STRING },
+	[BRIDGER_MAT_DHCP_MODE] = { "dhcp_mode", BLOBMSG_TYPE_STRING },
+};
+
+static int
+bridger_set_client_bridge(const char *name, struct blob_attr *attr)
+{
+	struct blob_attr *tb[__BRIDGER_MAT_MAX], *cur;
+	enum mat_dhcp_mode dhcp_mode = MAT_DHCP_BROADCAST;
+	const char *bridge = "";
+
+	blobmsg_parse(mat_policy, __BRIDGER_MAT_MAX, tb,
+		      blobmsg_data(attr), blobmsg_len(attr));
+
+	if (!tb[BRIDGER_MAT_PORT]) {
+		bridger_mat_delete(name);
+		return 0;
+	}
+
+	if ((cur = tb[BRIDGER_MAT_DHCP_MODE]) != NULL) {
+		if (!strcmp(blobmsg_get_string(cur), "chaddr"))
+			dhcp_mode = MAT_DHCP_CHADDR;
+		else if (strcmp(blobmsg_get_string(cur), "broadcast") != 0)
+			return UBUS_STATUS_INVALID_ARGUMENT;
+	}
+
+	if ((cur = tb[BRIDGER_MAT_BRIDGE]) != NULL)
+		bridge = blobmsg_get_string(cur);
+
+	if (bridger_mat_set(name, blobmsg_get_string(tb[BRIDGER_MAT_PORT]),
+			    bridge, dhcp_mode))
+		return UBUS_STATUS_INVALID_ARGUMENT;
+
+	return 0;
+}
+
+enum {
 	BRIDGER_DEVCFG_NAME,
 	BRIDGER_DEVCFG_REDIRECT,
+	BRIDGER_DEVCFG_CLIENT_BRIDGE,
 	__BRIDGER_DEVCFG_MAX,
 };
 
 static const struct blobmsg_policy devcfg_policy[__BRIDGER_DEVCFG_MAX] = {
 	[BRIDGER_DEVCFG_NAME] = { "name", BLOBMSG_TYPE_STRING },
 	[BRIDGER_DEVCFG_REDIRECT] = { "redirect", BLOBMSG_TYPE_STRING },
+	[BRIDGER_DEVCFG_CLIENT_BRIDGE] = { "client_bridge", BLOBMSG_TYPE_TABLE },
 };
 
 static int
@@ -124,6 +171,16 @@ bridger_set_device_config(struct ubus_context *ctx, struct ubus_object *obj,
 
 	if ((cur = tb[BRIDGER_DEVCFG_NAME]) == NULL)
 		return UBUS_STATUS_INVALID_ARGUMENT;
+
+	/* the station of a client bridge can appear after its configuration */
+	if (tb[BRIDGER_DEVCFG_CLIENT_BRIDGE]) {
+		int ret;
+
+		ret = bridger_set_client_bridge(blobmsg_get_string(cur),
+						tb[BRIDGER_DEVCFG_CLIENT_BRIDGE]);
+		if (ret || !tb[BRIDGER_DEVCFG_REDIRECT])
+			return ret;
+	}
 
 	if ((dev = device_get_by_name(blobmsg_get_string(cur))) == NULL)
 		return UBUS_STATUS_NOT_FOUND;
@@ -198,10 +255,25 @@ bridger_set_config(struct ubus_context *ctx, struct ubus_object *obj,
 }
 
 
+static int
+bridger_mat_get_status(struct ubus_context *ctx, struct ubus_object *obj,
+		       struct ubus_request_data *req, const char *method,
+		       struct blob_attr *msg)
+{
+	static struct blob_buf b;
+
+	blob_buf_init(&b, 0);
+	bridger_mat_status(&b);
+	ubus_send_reply(ctx, req, b.head);
+
+	return 0;
+}
+
 static const struct ubus_method bridger_methods[] = {
 	UBUS_METHOD("set_config", bridger_set_config, config_policy),
 	UBUS_METHOD("set_blacklist", bridger_set_blacklist, blacklist_policy),
 	UBUS_METHOD("set_device_config", bridger_set_device_config, devcfg_policy),
+	UBUS_METHOD_NOARG("mat_status", bridger_mat_get_status),
 };
 
 static struct ubus_object_type bridger_object_type =

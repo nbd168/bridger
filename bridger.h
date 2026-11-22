@@ -25,6 +25,7 @@
 #include "bpf.h"
 #include "nl.h"
 #include "ubus.h"
+#include "mat.h"
 
 #define D(format, ...) \
 	bridger_dprintf("%s(%d) " format, __func__, __LINE__, ##__VA_ARGS__)
@@ -45,11 +46,13 @@ void bridger_udebug_config(struct udebug_ubus *ctx, struct blob_attr *data,
 #endif
 
 #define BRIDGER_PROG_PATH	BRIDGER_BPF_DIR "/bridger-bpf.o"
+#define BRIDGER_MAT_PROG_PATH	BRIDGER_BPF_DIR "/bridger-mat-bpf.o"
 #define BRIDGER_PIN_PATH	"/sys/fs/bpf/bridger"
 #define BRIDGER_DATA_PATH	"/sys/fs/bpf/bridger_data"
 
 #define BRIDGER_EWMA_SHIFT	8
 
+#define BRIDGER_PRIO_MAT	0xba00
 #define BRIDGER_PRIO_BPF	0xbb00
 
 #define BRIDGER_PRIO_OFFLOAD_8021Q	0xbb01

@@ -19,6 +19,10 @@
 #include <errno.h>
 #include "bridger.h"
 
+#ifndef IFF_LOWER_UP
+#define IFF_LOWER_UP 0x10000
+#endif
+
 #ifndef BR_BOOLOPT_FDB_LOCAL_VLAN_0
 #define BR_BOOLOPT_FDB_LOCAL_VLAN_0 4
 #endif
@@ -204,6 +208,7 @@ handle_newlink(struct nlmsghdr *nh)
 	}
 
 	dev->resync_seen = true;
+	dev->carrier = !!(ifi->ifi_flags & IFF_LOWER_UP);
 
 	if ((cur = tb[IFLA_ADDRESS]) != NULL &&
 	    nla_len(cur) == ETH_ALEN)

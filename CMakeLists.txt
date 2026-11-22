@@ -8,6 +8,7 @@ SET(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 
 OPTION(UBUS_SUPPORT "ubus support" ON)
 OPTION(NL_UDEBUG "libnl-tiny udebug support" OFF)
+OPTION(MAT_SUPPORT "client bridge support for stations without 4-address mode" ON)
 
 IF (NOT DEFINED LIBNL_LIBS)
 	include(FindPkgConfig)
@@ -30,6 +31,11 @@ IF (UBUS_SUPPORT)
   IF (NL_UDEBUG)
     ADD_DEFINITIONS(-DNL_UDEBUG)
   ENDIF()
+ENDIF()
+
+IF (MAT_SUPPORT)
+  ADD_DEFINITIONS(-DMAT_SUPPORT)
+  SET(SOURCES ${SOURCES} mat.c mat-arp.c mat-dhcp.c mat-bpf.c)
 ENDIF()
 
 IF (DEFINED BPF_DIR)

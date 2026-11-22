@@ -287,6 +287,7 @@ void device_free(struct device *dev)
 
 	D("Free device %s\n", dev->ifname);
 
+	bridger_mat_device_free(dev);
 	avl_delete(&devices, &dev->node);
 
 	if (!br && dev->master_ifindex) {
@@ -414,6 +415,8 @@ static void __device_update(struct device *dev)
 		  odev ? odev->ifname : "(none)");
 
 	dev->offload_dev = odev;
+
+	bridger_mat_device_update(dev);
 }
 
 static void bridger_device_update_cb(struct uloop_timeout *t)

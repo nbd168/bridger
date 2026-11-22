@@ -31,6 +31,7 @@ struct device {
 	bool offload_update;
 	bool port_forwarding;
 	bool resync_seen;
+	bool carrier;
 
 	struct device *master;
 	struct device *offload_dev;

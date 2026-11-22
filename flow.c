@@ -246,7 +246,9 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 		bridger_flow_delete(victim);
 	}
 
-	if (!fdb_in->dev->br && !fdb_out->dev->br)
+	if (!fdb_in->dev->br && !fdb_out->dev->br &&
+	    !bridger_mat_dev_is_port(fdb_in->dev) &&
+	    !bridger_mat_dev_is_port(fdb_out->dev))
 		bridger_nl_flow_offload_add(flow);
 	else
 		bridger_nl_flow_offload_del(flow);
