@@ -830,7 +830,14 @@ __bridger_nl_flow_offload_add(struct bridger_flow *flow, struct device *dev)
 
 	acts = nla_nest_start(msg, TCA_FLOWER_ACT);
 
-	if (flow->key.vlan != flow->offload.vlan) {
+	/*
+	 * Pop and push a present tag even if the VID does not change.
+	 * PPE drivers (mtk_ppe, airoha_ppe) build the egress tags from push
+	 * actions only, so a VLAN match without pop/push would make the
+	 * offloaded flow leave untagged.
+	 */
+	if (flow->key.vlan != flow->offload.vlan ||
+	    (flow->key.vlan & BRIDGER_VLAN_PRESENT)) {
 		if (flow->key.vlan & BRIDGER_VLAN_PRESENT) {
 			static const struct tc_vlan tcv = {
 				.action = TC_ACT_PIPE,
